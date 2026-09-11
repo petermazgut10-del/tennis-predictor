@@ -5,6 +5,7 @@ import os
 # Výsledky: TennisMyLife (denne aktualizované, MIT licencia). Kurzy na backtest: tennis-data.co.uk (voliteľné).
 START_YEAR = 2011            # od ktorého roku sa sťahujú výsledky
 ODDS_START_YEAR = 2013       # od ktorého roku sa sťahujú historické kurzy
+ODDS_DOWNLOAD_BUDGET_S = 120 # max. čas na sťahovanie kurzov v jednom behu (pomalý server nezdrží celý beh)
 TOURS = ["ATP", "WTA"]
 INCLUDE_CHALLENGERS = True   # Challengery zlepšujú ratingy hráčov mimo top 100
 RAW_DIR = "data/raw"
