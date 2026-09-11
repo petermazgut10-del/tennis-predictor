@@ -17,7 +17,7 @@ import numpy as np
 import pandas as pd
 
 import config
-from src import backtest, elo, tdata, tml, tracker
+from src import backtest, elo, odds_store, tdata, tml, tracker
 from src.names import FullNameIndex
 from src.odds_api import OddsAPI, QuotaLow
 from src.predict import player_index, predict_events
@@ -72,10 +72,12 @@ def ratings_export(book: elo.EloBook, model, last_date: pd.Timestamp) -> dict:
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=["update", "backtest"])
+    ap.add_argument("cmd", choices=["update", "backtest", "snapshot"])
     ap.add_argument("--offline", action="store_true")
     args = ap.parse_args()
     now = pd.Timestamp.now(tz="UTC")
+    if args.cmd == "snapshot":
+        return snapshot(now)
 
     print("1) Historické dáta")
     if not args.offline:
@@ -129,16 +131,22 @@ def main():
         notes += api.log
     preds.sort(key=lambda m: m["start"])
 
-    print("5) Papierové stávky")
+    print("5) Papierové stávky a história kurzov")
+    n_snap = odds_store.append(odds_store.rows_from_predictions(preds, now, "main"))
     log = tracker.load()
     log, n_new = tracker.add_value_bets(log, preds, now)
+    snaps = odds_store.load()
+    log = odds_store.update_bet_closing(log, snaps)
     try:
         log = tracker.settle_with_scores(log, api, now)
     except Exception as e:
         notes.append(f"Vyhodnotenie cez /scores zlyhalo: {e}")
     log = tracker.settle_with_history(log, hist, now)
     tracker.save(log)
-    print(f"   nové tipy: {n_new}, čakajúce: {(log['status'] == 'pending').sum()}")
+    print(f"   nové tipy: {n_new}, čakajúce: {(log['status'] == 'pending').sum()}, uložené kurzy: {n_snap}")
+    hist_eval = odds_store.evaluate(snaps, hist, threshold)
+    hist_eval["generated_at"] = now.isoformat()
+    write_json("history.json", hist_eval)
 
     write_json("predictions.json", {
         "generated_at": now.isoformat(), "threshold": threshold, "basis": config.VALUE_ODDS_BASIS,
@@ -147,6 +155,38 @@ def main():
     })
     write_json("tracker.json", tracker.summary(log))
     print("Hotovo.")
+
+
+def snapshot(now: pd.Timestamp):
+    """Rýchla snímka kurzov pred začiatkom papierových tipov (záverečný kurz -> CLV)."""
+    log = tracker.load()
+    if log.empty:
+        print("Žiadne papierové tipy.")
+        return
+    st = pd.to_datetime(log["start"], utc=True, format="ISO8601")
+    soon = log[(log["status"] == "pending") & (st > now + pd.Timedelta(minutes=10))
+               & (st <= now + pd.Timedelta(hours=config.SNAPSHOT_WINDOW_H))]
+    if soon.empty:
+        print(f"Žiadny tip nezačína v najbližších {config.SNAPSHOT_WINDOW_H} h – nič netreba (0 kreditov).")
+        return
+    api = OddsAPI()
+    if not api.enabled:
+        print("Chýba ODDS_API_KEY.")
+        return
+    rows = []
+    for key in soon["sport_key"].unique():
+        try:
+            events = api.odds(key)
+        except QuotaLow as e:
+            print(f"  ! {e}")
+            break
+        title = soon.loc[soon["sport_key"] == key, "tournament"].iloc[0]
+        rows += odds_store.rows_from_events(events, {"key": key, "title": title}, now, "close")
+    n = odds_store.append(rows)
+    log = odds_store.update_bet_closing(log, odds_store.load())
+    tracker.save(log)
+    write_json("tracker.json", tracker.summary(log))
+    print(f"Snímka kurzov: {n} zápasov, tipy pred začiatkom: {len(soon)}, zostáva kreditov: {api.remaining}")
 
 
 if __name__ == "__main__":

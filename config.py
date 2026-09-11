@@ -41,6 +41,9 @@ ODDS_API_KEY = os.environ.get("ODDS_API_KEY", "")
 ODDS_API_REGIONS = "eu"      # eu obsahuje aj Pinnacle a Betfair Exchange
 ODDS_API_MIN_REMAINING = 40  # keď ostane menej kreditov, sťahovanie sa preskočí
 SETTLE_WITH_SCORES = True    # vyhodnocovať papierové stávky cez /scores (2 kredity / turnaj)
+# Priebežné snímky kurzov (príkaz "snapshot", beží každé 2 hodiny): kurzy sa stiahnu len vtedy,
+# keď niektorý papierový tip začína v najbližších SNAPSHOT_WINDOW_H hodinách -> záverečný kurz a CLV.
+SNAPSHOT_WINDOW_H = 2.25
 
 # --- Výstupy ---
 DOCS_DATA_DIR = "docs/data"

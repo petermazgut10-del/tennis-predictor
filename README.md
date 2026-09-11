@@ -12,6 +12,8 @@ Beží zadarmo na GitHube: každé ráno sa sám aktualizuje a výsledky ukáže
 5. Stiahne kurzy na nadchádzajúce zápasy z [The Odds API](https://the-odds-api.com) (zadarmo 500 kreditov / mesiac)
    a označí zápasy, kde je kurz vyšší ako férový kurz modelu.
 6. Každý value tip zapíše ako **papierovú stávku** a po zápase ju vyhodnotí – to je skutočný test bez peňazí.
+   Tesne pred začiatkom zápasu uloží aj **záverečný kurz** a spočíta **CLV** (či sa trh po tipe posunul k názoru modelu).
+   Každé ráno ukladá kurzy všetkých zápasov → **vlastná história kurzov** a vlastný backtest.
 7. Všetko zobrazí na stránke (GitHub Pages) – vrátane **kalkulačky** pre akýkoľvek zápas (aj 250-ky a Challengery).
 
 > The Odds API zadarmo pokrýva len Grand Slamy, turnaje 1000 a 500. Na ostatné zápasy použi kalkulačku a kurzy zo svojej stávkovej kancelárie.
@@ -49,6 +51,7 @@ Beží zadarmo na GitHube: každé ráno sa sám aktualizuje a výsledky ukáže
 O minútu-dve bude stránka na `https://<tvoje-meno>.github.io/tennis-predictor/`.
 
 Odteraz sa to každý deň o 7:00 (letný čas) samo aktualizuje. Ručne kedykoľvek cez **Actions → Run workflow**.
+Okrem toho beží každé 2 hodiny krátka kontrola: ak niektorý papierový tip začína do ~2 hodín, stiahne aktuálne kurzy (záverečný kurz pre CLV). Keď nič nezačína, nestojí žiadne kredity.
 
 ---
 
