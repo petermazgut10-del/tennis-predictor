@@ -12,13 +12,18 @@ import requests
 import config
 from src.names import canonical_map, td_key
 
-BASE = "http://www.tennis-data.co.uk"
-HEADERS = {"User-Agent": "Mozilla/5.0 (tennis-predictor; personal research)"}
+BASES = ["http://www.tennis-data.co.uk", "https://www.tennis-data.co.uk"]
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
+                  "Chrome/128.0 Safari/537.36",
+    "Accept": "*/*",
+    "Referer": "http://www.tennis-data.co.uk/alldata.php",
+}
 
 
 def _urls(tour: str, year: int) -> list[str]:
     folder = f"{year}" if tour == "ATP" else f"{year}w"
-    return [f"{BASE}/{folder}/{year}.xlsx", f"{BASE}/{folder}/{year}.xls"]
+    return [f"{b}/{folder}/{year}.{ext}" for ext in ("xlsx", "xls") for b in BASES]
 
 
 def _path(tour: str, year: int, ext: str) -> str:
@@ -45,7 +50,8 @@ def download(force_recent: bool = True, verbose: bool = True) -> list[str]:
                     if verbose:
                         print(f"  ! {url}: {e}")
                     continue
-                if r.status_code == 200 and len(r.content) > 5000:
+                ctype = r.headers.get("content-type", "")
+                if r.status_code == 200 and len(r.content) > 5000 and "html" not in ctype.lower():
                     ext = ".xlsx" if url.endswith(".xlsx") else ".xls"
                     with open(_path(tour, year, ext), "wb") as f:
                         f.write(r.content)
@@ -54,7 +60,9 @@ def download(force_recent: bool = True, verbose: bool = True) -> list[str]:
                     if verbose:
                         print(f"  ✓ {tour} {year} ({len(r.content)//1024} kB)")
                     break
-                time.sleep(0.5)
+                if verbose:
+                    print(f"  · {url}: HTTP {r.status_code}, {len(r.content)} B, {ctype}, {r.content[:80]!r}")
+                time.sleep(0.3)
             if not ok:
                 if existing:  # sťahovanie zlyhalo, použijeme starú kópiu
                     got.append(existing[0])
@@ -111,6 +119,8 @@ def load_all(paths: list[str] | None = None) -> pd.DataFrame:
             os.path.join(config.RAW_DIR, f) for f in os.listdir(config.RAW_DIR)
             if f.endswith((".xlsx", ".xls"))
         )
+    if not paths:
+        raise SystemExit("Chýbajú historické dáta (data/raw je prázdne) – sťahovanie z tennis-data.co.uk zlyhalo, pozri log vyššie.")
     frames = []
     for p in paths:
         tour = os.path.basename(p).split("_")[0]
