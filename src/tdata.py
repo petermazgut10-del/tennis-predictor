@@ -34,7 +34,7 @@ def _path(tour: str, year: int, ext: str) -> str:
 
 
 def _get(url: str):
-    r = requests.get(url, headers=HEADERS, timeout=25)
+    r = requests.get(url, headers=HEADERS, timeout=(10, 30))
     ok = r.status_code == 200 and len(r.content) > 5000 and not r.content.lstrip()[:15].lower().startswith(b"<")
     return ok, r
 
@@ -55,8 +55,14 @@ def download(verbose: bool = True) -> None:
             print(f"   tennis-data.co.uk nedostupné (HTTP {r.status_code}) – backtest použije uložené kurzy, ak sú")
         return
     got = 0
+    t0 = time.time()
     for tour in config.TOURS:
+        if time.time() - t0 > config.ODDS_DOWNLOAD_BUDGET_S:
+            break
         for year in range(config.ODDS_START_YEAR, this_year + 1):
+            if time.time() - t0 > config.ODDS_DOWNLOAD_BUDGET_S:
+                print(f"   tennis-data.co.uk: časový limit {config.ODDS_DOWNLOAD_BUDGET_S} s – zvyšok stiahne ďalší beh")
+                break
             existing = [p for p in (_path(tour, year, ".xlsx"), _path(tour, year, ".xls")) if os.path.exists(p)]
             if existing and year < this_year - 1:
                 continue

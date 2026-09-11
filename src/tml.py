@@ -53,12 +53,16 @@ def download(verbose: bool = True) -> None:
                 continue
             todo.append(name)
     todo += [n for t, n in ONGOING if t in config.TOURS and (config.INCLUDE_CHALLENGERS or "challenger" not in n)]
-    ok = 0
+    ok = fails = 0
     for name in todo:
         try:
-            r = requests.get(f"{BASE}/{name}", headers=HEADERS, timeout=60)
+            r = requests.get(f"{BASE}/{name}", headers=HEADERS, timeout=(10, 60))
         except requests.RequestException as e:
-            print(f"  ! {name}: {e}")
+            print(f"  ! {name}: {e.__class__.__name__}")
+            fails += 1
+            if fails >= 2 and ok == 0:
+                print("   TennisMyLife je teraz nedostupné – použijem uložené dáta z predchádzajúceho behu")
+                break
             continue
         if r.status_code == 200 and r.content[:10].startswith(b"tourney_id"):
             with open(_local(name), "wb") as f:
