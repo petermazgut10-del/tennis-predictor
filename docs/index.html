@@ -450,10 +450,10 @@ function renderBT() {
   const tl = $("#bt-tiles"); tl.replaceChildren();
   const tile = (l, v, d, cls) => h("div", { class: "tile" }, h("div", { class: "l" }, l), h("div", { class: "v " + (cls || "") }, v), d ? h("div", { class: "d" }, d) : null);
   tl.append(
-    tile("ROI v teste", spct(c.roi), `tréning ${spct(tr.roi)}`, c.roi > 0 ? "pos" : "negt"),
+    tile("ROI v teste", spct(c.roi), `tréning ${spct(tr.roi)}`, c.roi > 0 ? "pos" : c.roi < 0 ? "negt" : ""),
     tile("Stávok v teste", num(c.bets, 0), `rok ${B.tune_last_train_year + 1} a neskôr`),
     tile("Úspešnosť", pct(c.hit_rate), `priem. kurz ${num(c.avg_odds)}`),
-    tile("Zisk (1 j. / stávka)", sgn(c.profit, 1) + " j.", `max. prepad ${num(c.max_dd, 1)} j.`, c.profit > 0 ? "pos" : "negt"),
+    tile("Zisk (1 j. / stávka)", sgn(c.profit, 1) + " j.", `max. prepad ${num(c.max_dd, 1)} j.`, c.profit > 0 ? "pos" : c.profit < 0 ? "negt" : ""),
     tile("Bankroll, ¼ Kelly", "× " + num(B.kelly_final_bankroll, 2), "štart = 1,00"),
     tile("Prah edge", pct(B.chosen_edge, 1), B.basis === "avg" ? "na priemerných kurzoch" : B.basis));
   $("#bt-curve-sub").textContent = `Jednotky zisku pri vklade 1 j. na každý tip, od roku ${B.tune_last_train_year + 1}.`;
