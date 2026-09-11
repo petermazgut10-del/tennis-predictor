@@ -202,7 +202,7 @@ details summary { cursor: pointer; color: var(--ink-2); }
       <h2>Na čo si dať pozor</h2>
       <ul>
         <li>Model nevie o zraneniach, chorobe, motivácii ani o tom, že hráč včera odohral 3-hodinový zápas, ak ešte nie je v dátach. Pinnacle to vie. Keď sa model s trhom veľmi nezhoduje, častejšie má pravdu trh.</li>
-        <li>Historické dáta z tennis-data.co.uk sa dopĺňajú s oneskorením (zvyčajne raz za týždeň), preto ratingy nemusia obsahovať posledné dni.</li>
+        <li>Výsledky (ATP, Challengery, WTA) sú z TennisMyLife a aktualizujú sa denne. Historické kurzy na backtest sú z tennis-data.co.uk – ak stránka nie je dostupná, backtest proti kurzom sa preskočí.</li>
         <li>Backtest na „priemerných kurzoch“ je realistickejší než na „najlepších kurzoch“. Stávkové kancelárie navyše často obmedzia hráčov, ktorí dlhodobo vyhrávajú.</li>
         <li>Veľkosť stávky: navrhované % bankrollu je štvrtinové Kelly s limitom 2 %. Hraj len s peniazmi, ktoré si môžeš dovoliť stratiť.</li>
       </ul>
@@ -377,7 +377,11 @@ function renderVerdict() {
   const el = $("#verdict"); el.replaceChildren();
   if (!B) return;
   const c = B.chosen.test;
-  if (B.verdict === "edge") {
+  if (B.verdict === "no_odds") {
+    el.append(h("div", { class: "banner warn" }, h("span", { class: "ic" }, "!"),
+      h("div", {}, h("b", {}, "Historické kurzy zatiaľ nie sú k dispozícii. "),
+        "Model a ratingy fungujú, ale bez starých kurzov (tennis-data.co.uk) sa nedá overiť, či porazí stávkové kancelárie. Kým sa kurzy nenačítajú, rozhodujú papierové stávky.")));
+  } else if (B.verdict === "edge") {
     el.append(h("div", { class: "banner ok" }, h("span", { class: "ic" }, "✓"),
       h("div", {}, h("b", {}, "Backtest ukazuje výhodu. "),
         `Mimo tréningových rokov: ROI ${spct(c.roi)} na ${c.bets} stávkach. Pred reálnymi peniazmi si to over na papierových stávkach aspoň 2–3 mesiace.`)));
