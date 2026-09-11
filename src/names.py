@@ -117,3 +117,94 @@ class PlayerIndex:
         if ties and best[0] == 1:
             return None
         return best[4]
+
+
+class FullNameIndex:
+    """Index hráčov s celými menami (TennisMyLife) – párovanie mien z The Odds API aj z tennis-data.co.uk."""
+
+    def __init__(self, players: dict[str, dict], aliases_path: str | None = None):
+        # players: key ("ATP|S0AG") -> {"name": "Jannik Sinner", "last": Timestamp, "n": int}
+        self.players = players
+        self.exact = defaultdict(list)
+        self.tokset = defaultdict(list)
+        self.by_last = defaultdict(list)
+        for key, info in players.items():
+            tour = key.split("|", 1)[0]
+            toks = norm(info.get("name", "")).replace(".", "").split()
+            if not toks:
+                continue
+            rec = (key, toks, info)
+            self.exact[(tour, " ".join(toks))].append(rec)
+            self.tokset[(tour, " ".join(sorted(toks)))].append(rec)
+            self.by_last[(tour, toks[-1])].append(rec)
+            if len(toks) >= 3:  # viacslovné priezvisko, napr. "de minaur", "bautista agut"
+                self.by_last[(tour, toks[1])].append(rec)
+        self.aliases = {}
+        if aliases_path and os.path.exists(aliases_path):
+            with open(aliases_path, newline="", encoding="utf-8") as f:
+                for row in csv.DictReader(f):
+                    t = row["tour"].strip().upper()
+                    target = norm(row.get("data_name") or row.get("td_name") or "").replace(".", "")
+                    hit = self.exact.get((t, target))
+                    if hit:
+                        self.aliases[(t, norm(row["odds_name"]).replace(".", ""))] = self._best(hit)
+
+    @staticmethod
+    def _best(recs):
+        return max(recs, key=lambda r: (str(r[2].get("last", "")), r[2].get("n", 0)))[0]
+
+    def match(self, full_name: str, tour: str) -> str | None:
+        n = norm(full_name).replace(".", "")
+        if (tour, n) in self.aliases:
+            return self.aliases[(tour, n)]
+        toks = n.split()
+        if not toks:
+            return None
+        for table, k in ((self.exact, " ".join(toks)), (self.tokset, " ".join(sorted(toks)))):
+            hit = table.get((tour, k))
+            if hit:
+                return self._best(hit)
+        # záloha: rovnaké priezvisko + zhodné krstné meno / iniciála
+        cands = []
+        for k in range(1, len(toks)):
+            first, last = toks[:k], toks[k:]
+            for key, ptoks, info in self._by_surname(tour, last):
+                pfirst = ptoks[: len(ptoks) - len(last)]
+                score = 2 if pfirst and first[0] == pfirst[0] else (1 if pfirst and first[0][0] == pfirst[0][0] else 0)
+                if score:
+                    cands.append((score, str(info.get("last", "")), info.get("n", 0), key))
+        if not cands:
+            return None
+        cands.sort(reverse=True)
+        if len(cands) > 1 and cands[0][0] == 1 and cands[1][0] == 1 and cands[0][3] != cands[1][3]:
+            return None  # nejednoznačné
+        return cands[0][3]
+
+    def _by_surname(self, tour, last_toks):
+        seen = set()
+        for rec in self.by_last.get((tour, last_toks[-1]), []) + self.by_last.get((tour, last_toks[0]), []):
+            key, ptoks, info = rec
+            if key in seen or len(ptoks) <= len(last_toks):
+                continue
+            if ptoks[-len(last_toks):] == last_toks:
+                seen.add(key)
+                yield rec
+
+    def match_td(self, td_name: str, tour: str, near=None) -> str | None:
+        """'Auger-Aliassime F.' -> kľúč hráča. near = dátum zápasu (preferuje hráča aktívneho v tom čase)."""
+        surname, init = parse_td(td_name)
+        if not surname:
+            return None
+        last = surname.split()
+        cands = []
+        for key, ptoks, info in self._by_surname(tour, last):
+            first = ptoks[: len(ptoks) - len(last)]
+            score = _compat(first, init)
+            if score:
+                cands.append((score, info.get("n", 0), key))
+        if not cands:
+            return None
+        cands.sort(reverse=True)
+        if len(cands) > 1 and cands[0][0] == cands[1][0] and cands[0][2] != cands[1][2]:
+            return None
+        return cands[0][2]

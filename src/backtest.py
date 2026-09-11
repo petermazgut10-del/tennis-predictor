@@ -50,12 +50,20 @@ def fit_latest(df: pd.DataFrame, feats: pd.DataFrame) -> Calibrated:
 
 
 def accuracy_table(d: pd.DataFrame) -> list[dict]:
+    """Presnosť na zápasoch s kurzami Pinnacle (férové porovnanie s trhom); bez kurzov na všetkých zápasoch."""
     t = d.dropna(subset=["p_model_w", "odds_w_pinnacle", "odds_l_pinnacle"]).copy()
-    t["p_pin_w"] = no_vig(t["odds_w_pinnacle"], t["odds_l_pinnacle"])
+    methods = [("Model (Elo + kalibrácia)", "p_model_w"), ("Čisté Elo", "p_elo_w")]
+    if len(t) >= 200:
+        t["p_pin_w"] = no_vig(t["odds_w_pinnacle"], t["odds_l_pinnacle"])
+        methods.append(("Pinnacle (trh)", "p_pin_w"))
+    else:
+        t = d.dropna(subset=["p_model_w"]).copy()
+    if t.empty:
+        return []
     ar = t["w_rank"].fillna(99999)
     br = t["l_rank"].fillna(99999)
     out = []
-    for label, col in [("Model (Elo + kalibrácia)", "p_model_w"), ("Čisté Elo", "p_elo_w"), ("Pinnacle (trh)", "p_pin_w")]:
+    for label, col in methods:
         p = t[col].clip(EPS, 1 - EPS)
         out.append({
             "name": label,
@@ -144,7 +152,7 @@ def run(df: pd.DataFrame, feats: pd.DataFrame) -> tuple[dict, pd.DataFrame]:
     for thr in config.EDGE_GRID:
         grid.append({"edge": thr, "train": summarize(select(train_c, thr)), "test": summarize(select(test_c, thr))})
 
-    if config.AUTO_TUNE_EDGE and len(train_c):
+    if config.AUTO_TUNE_EDGE and len(train_c) >= 200:
         eligible = [g for g in grid if g["train"]["bets"] >= 200]
         best = max(eligible or grid, key=lambda g: g["train"]["roi"] if g["train"]["roi"] is not None else -9)
         thr = best["edge"]
@@ -163,12 +171,13 @@ def run(df: pd.DataFrame, feats: pd.DataFrame) -> tuple[dict, pd.DataFrame]:
 
     def seg(frame, by):
         out = []
-        for k, g in frame.groupby(by):
+        for k, g in frame.groupby(by, observed=True):
             s = summarize(g)
             s["segment"] = str(k)
             out.append(s)
         return out
 
+    test_bets = test_bets.copy()
     test_bets = test_bets.assign(odds_bucket=pd.cut(test_bets["odds"], [1, 1.6, 2.2, 3.0, 5.0, 100],
                                                    labels=["1.30–1.60", "1.60–2.20", "2.20–3.00", "3.00–5.00", "5+"]))
     curve = test_bets[["date", "profit"]].copy()
@@ -177,8 +186,13 @@ def run(df: pd.DataFrame, feats: pd.DataFrame) -> tuple[dict, pd.DataFrame]:
 
     test_roi = chosen["test"]["roi"]
     train_roi = chosen["train"]["roi"]
-    verdict = "edge" if (test_roi is not None and train_roi is not None and test_roi > 0 and train_roi > 0
-                         and chosen["test"]["bets"] >= 100) else "no_edge"
+    if len(cands) < 500:
+        verdict = "no_odds"   # nemáme historické kurzy – nedá sa povedať, či model porazí trh
+    elif (test_roi is not None and train_roi is not None and test_roi > 0 and train_roi > 0
+          and chosen["test"]["bets"] >= 100):
+        verdict = "edge"
+    else:
+        verdict = "no_edge"
 
     result = {
         "basis": basis,
@@ -198,5 +212,6 @@ def run(df: pd.DataFrame, feats: pd.DataFrame) -> tuple[dict, pd.DataFrame]:
         "kelly_final_bankroll": (kelly_curve(test_bets)[-1] if len(test_bets) else 1.0),
         "years": [int(tested["year"].min()), int(tested["year"].max())] if len(tested) else [],
         "matches_tested": int(len(tested)),
+        "matches_with_odds": int(len(cands)),
     }
     return result, d

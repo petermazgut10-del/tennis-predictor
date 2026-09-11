@@ -97,7 +97,7 @@ def settle_with_scores(log: pd.DataFrame, api, now: pd.Timestamp) -> pd.DataFram
 
 
 def settle_with_history(log: pd.DataFrame, hist: pd.DataFrame, now: pd.Timestamp) -> pd.DataFrame:
-    """Záloha: vyhodnotenie z tennis-data.co.uk (dopĺňa sa s pár dňovým oneskorením)."""
+    """Záloha: vyhodnotenie z histórie výsledkov (TennisMyLife)."""
     pend = log[log["status"] == "pending"]
     if pend.empty:
         return log
@@ -105,7 +105,8 @@ def settle_with_history(log: pd.DataFrame, hist: pd.DataFrame, now: pd.Timestamp
         start = pd.Timestamp(r["start"]).tz_convert(None) if pd.Timestamp(r["start"]).tzinfo else pd.Timestamp(r["start"])
         if start > now.tz_convert(None) - pd.Timedelta(days=1):
             continue
-        win = (hist["date"] - start).abs() <= pd.Timedelta(days=2)
+        # v TennisMyLife je dátum začiatok turnaja (+ odhad podľa kola), preto širšie okno
+        win = (hist["start"] >= start - pd.Timedelta(days=16)) & (hist["start"] <= start + pd.Timedelta(days=1))
         pk, ok = r["player_key"], r["opponent_key"]
         m = hist[win & (((hist["w_key"] == pk) & (hist["l_key"] == ok)) | ((hist["w_key"] == ok) & (hist["l_key"] == pk)))]
         if len(m):
@@ -114,7 +115,7 @@ def settle_with_history(log: pd.DataFrame, hist: pd.DataFrame, now: pd.Timestamp
             if "walkover" in c or "w/o" in c:
                 _settle_row(log, i, None, now, "walkover")
             else:
-                _settle_row(log, i, row["w_key"] == pk, now, "tennis-data" + (" (skreč)" if "retired" in c else ""))
+                _settle_row(log, i, row["w_key"] == pk, now, "výsledky" + (" (skreč)" if "retired" in c else ""))
         elif start < now.tz_convert(None) - pd.Timedelta(days=21):
             _settle_row(log, i, None, now, "výsledok sa nenašiel")
     return log

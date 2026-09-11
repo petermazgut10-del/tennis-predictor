@@ -9,18 +9,15 @@ import pandas as pd
 import config
 from src.elo import EloBook
 from src.model import Calibrated, features
-from src.names import PlayerIndex
+from src.names import FullNameIndex
 from src.surfaces import best_of_for, surface_for, tour_for
 
 MIN_MATCHES_FOR_VALUE = 15   # hráč s menej zápasmi v histórii nedostane value tip (málo dát)
 
 
-def player_index(book: EloBook, aliases_path: str) -> PlayerIndex:
-    players = {}
-    for key, pl in book.p.items():
-        tour, rest = key.split("|", 1)
-        players[f"{tour}|{rest}"] = {"name": pl.name, "last": pl.last, "n": pl.n}
-    return PlayerIndex(players, aliases_path)
+def player_index(book: EloBook, aliases_path: str) -> FullNameIndex:
+    players = {key: {"name": pl.name, "last": pl.last, "n": pl.n} for key, pl in book.p.items()}
+    return FullNameIndex(players, aliases_path)
 
 
 def snapshot(book: EloBook, ka: str, kb: str, surface: str, when: pd.Timestamp) -> dict:
@@ -77,7 +74,7 @@ def kelly_pct(p: float, o: float) -> float:
 
 
 def predict_events(events: list[dict], sport: dict, book: EloBook, model: Calibrated,
-                   idx: PlayerIndex, threshold: float, now: dt.datetime) -> tuple[list[dict], list[str]]:
+                   idx: FullNameIndex, threshold: float, now: dt.datetime) -> tuple[list[dict], list[str]]:
     key = sport["key"]
     tour = tour_for(key)
     surface = surface_for(key, sport.get("title", ""))
