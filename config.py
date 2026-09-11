@@ -1,9 +1,12 @@
 """Nastavenia tenisového predictora. Všetko, čo chceš meniť, je tu."""
 import os
 
-# --- Historické dáta (tennis-data.co.uk) ---
-START_YEAR = 2011            # od ktorého roku sa sťahujú výsledky a kurzy
+# --- Historické dáta ---
+# Výsledky: TennisMyLife (denne aktualizované, MIT licencia). Kurzy na backtest: tennis-data.co.uk (voliteľné).
+START_YEAR = 2011            # od ktorého roku sa sťahujú výsledky
+ODDS_START_YEAR = 2013       # od ktorého roku sa sťahujú historické kurzy
 TOURS = ["ATP", "WTA"]
+INCLUDE_CHALLENGERS = True   # Challengery zlepšujú ratingy hráčov mimo top 100
 RAW_DIR = "data/raw"
 
 # --- Elo ---

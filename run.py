@@ -17,7 +17,8 @@ import numpy as np
 import pandas as pd
 
 import config
-from src import backtest, elo, tdata, tracker
+from src import backtest, elo, tdata, tml, tracker
+from src.names import FullNameIndex
 from src.odds_api import OddsAPI, QuotaLow
 from src.predict import player_index, predict_events
 
@@ -45,6 +46,15 @@ def write_json(name: str, obj):
         json.dump(_clean(obj), f, ensure_ascii=False, separators=(",", ":"))
 
 
+def players_from_hist(hist: pd.DataFrame) -> dict:
+    w = hist[["w_key", "winner", "date"]].set_axis(["key", "name", "date"], axis=1)
+    l = hist[["l_key", "loser", "date"]].set_axis(["key", "name", "date"], axis=1)
+    a = pd.concat([w, l]).sort_values("date")
+    g = a.groupby("key")
+    info = pd.DataFrame({"name": g["name"].last(), "last": g["date"].max(), "n": g.size()})
+    return {k: {"name": r.name, "last": r.last, "n": int(r.n)} for k, r in zip(info.index, info.itertuples())}
+
+
 def ratings_export(book: elo.EloBook, model, last_date: pd.Timestamp) -> dict:
     players = []
     cutoff = last_date - pd.Timedelta(days=548)
@@ -69,10 +79,13 @@ def main():
 
     print("1) Historické dáta")
     if not args.offline:
+        tml.download()
         tdata.download()
-    hist = tdata.load_all()
+    hist = tml.load_all()
     last_date = hist["date"].max()
-    print(f"   {len(hist)} zápasov, posledný {last_date.date()}")
+    print(f"   {len(hist)} zápasov (TennisMyLife), posledný {last_date.date()}")
+    n_odds = tdata.attach_odds(hist, tdata.load_all(), FullNameIndex(players_from_hist(hist)))
+    print(f"   kurzy z tennis-data.co.uk pripojené k {n_odds} zápasom")
 
     print("2) Elo ratingy")
     feats, book = elo.run(hist)

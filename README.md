@@ -4,7 +4,7 @@ Predikcie tenisových zápasov (ATP + WTA) pred zápasom a hľadanie **value st�
 Beží zadarmo na GitHube: každé ráno sa sám aktualizuje a výsledky ukáže na webovej stránke.
 
 **Čo robí**
-1. Stiahne historické výsledky + kurzy od roku 2011 z [tennis-data.co.uk](http://www.tennis-data.co.uk) (zadarmo).
+1. Stiahne výsledky zápasov od roku 2011 (ATP, Challengery, WTA) z [TennisMyLife](https://stats.tennismylife.org) – zadarmo, MIT licencia, denne aktualizované – a historické kurzy z [tennis-data.co.uk](http://www.tennis-data.co.uk) na backtest (ak je stránka dostupná).
 2. Vypočíta **Elo ratingy** každého hráča – celkový a pre každý povrch (hard / antuka / tráva).
 3. **Kalibračný model** (logistická regresia) z nich spraví pravdepodobnosť výhry. Model sa vždy učí len na minulosti.
 4. **Backtest**: overí, ako by model dopadol v rokoch 2015–dnes, a porovná ho s Pinnacle (najostrejšou kanceláriou).
@@ -77,9 +77,10 @@ Všetky nastavenia sú v `config.py` (dá sa editovať priamo na GitHube – iko
 
 **Nenapárovaný hráč** (meno z The Odds API sa nenašlo v historických dátach): doplň riadok do `state/aliases.csv`, napr.
 ```
-tour,odds_name,td_name
-ATP,Alex Michelsen,Michelsen A.
+tour,odds_name,data_name
+ATP,Alex Michelsen,Alex Michelsen
 ```
+(`data_name` = meno tak, ako je v Elo rebríčku na stránke)
 
 **Kredity The Odds API**: jeden beh stojí ~1 kredit za každý práve hraný veľký turnaj + 2 kredity za vyhodnotenie. Pri 1 behu denne to je zvyčajne 100–350 kreditov mesačne. Keď ostane menej ako 40, sťahovanie sa samo preskočí.
 
@@ -97,6 +98,6 @@ python tests/test_all.py        # testy na syntetických dátach (bez internetu)
 
 ## Obmedzenia (poctivo)
 - Model nevie o zraneniach, únave ani motivácii. Stávkové kancelárie áno.
-- tennis-data.co.uk dopĺňa výsledky s oneskorením (zvyčajne raz týždenne), takže ratingy nemusia obsahovať posledné dni.
+- Ak tennis-data.co.uk nie je dostupné, backtest proti historickým kurzom sa preskočí (stránka to ukáže). Ratingy a tipy fungujú ďalej.
 - Backtest ráta s kurzami tesne pred zápasom; reálne kurzy, za ktoré stihneš staviť, môžu byť iné. Kancelárie tiež obmedzujú úspešných hráčov.
 - Hraj zodpovedne a len s peniazmi, ktoré si môžeš dovoliť stratiť.
