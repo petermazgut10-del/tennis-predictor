@@ -1,0 +1,1 @@
+# balík s kódom predictora
