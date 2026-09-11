@@ -2,8 +2,9 @@ name: Tenisové predikcie
 
 on:
   schedule:
-    - cron: "0 5 * * *"     # každý deň o 5:00 UTC (7:00 v lete / 6:00 v zime v SR)
-  workflow_dispatch:         # ručné spustenie tlačidlom "Run workflow"
+    - cron: "0 5 * * *"      # hlavný beh: každý deň o 5:00 UTC (7:00 v lete / 6:00 v zime v SR)
+    - cron: "20 */2 * * *"   # snímka kurzov každé 2 hodiny – kredity míňa len keď tip čoskoro začína
+  workflow_dispatch:         # ručné spustenie tlačidlom "Run workflow" = hlavný beh
 
 permissions:
   contents: write
@@ -16,6 +17,8 @@ jobs:
   update:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      MODE: ${{ github.event.schedule == '20 */2 * * *' && 'snapshot' || 'update' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -27,21 +30,24 @@ jobs:
       - run: pip install -r requirements.txt
 
       - name: Cache historických dát
+        if: env.MODE == 'update'
         uses: actions/cache@v4
         with:
           path: data/raw
           key: tennis-raw-${{ github.run_id }}
           restore-keys: tennis-raw-
 
-      - name: Aktualizácia predikcií
+      - name: Beh (${{ env.MODE }})
         env:
           ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
-        run: python run.py update
+        run: python run.py "$MODE"
 
       - name: Uloženie výsledkov
         run: |
           git config user.name "tennis-bot"
           git config user.email "tennis-bot@users.noreply.github.com"
           git add docs/data state
-          git diff --cached --quiet || git commit -m "Predikcie $(date -u +'%Y-%m-%d %H:%M') UTC"
+          if git diff --cached --quiet; then echo "Bez zmien."; exit 0; fi
+          git commit -m "Predikcie ($MODE) $(date -u +'%Y-%m-%d %H:%M') UTC"
+          git pull --rebase --autostash || true
           git push
