@@ -177,8 +177,12 @@ details summary { cursor: pointer; color: var(--ink-2); }
   <section id="tab-paper" hidden>
     <p class="note" style="margin-top:0">Každý value tip sa automaticky zapíše s kurzom v čase tipu a po zápase sa vyhodnotí. Vklad = 1 jednotka. Toto je jediný test, pri ktorom model nemôže „vidieť budúcnosť“ – rozhoduj sa podľa neho, nie podľa backtestu.</p>
     <div id="pp-tiles" class="tiles"></div>
+    <h2 style="margin-top:4px">Záverečný kurz (CLV)</h2>
+    <p class="note" style="margin-top:-6px">Porovnanie kurzu v čase tipu s kurzom tesne pred zápasom. Keď kurz po tipe klesá, trh sa posúva k názoru modelu – najrýchlejší signál, či model má výhodu (stačí 30–50 tipov).</p>
+    <div id="clv-tiles" class="tiles"></div>
     <div class="card"><h2>Kumulatívny zisk papierových stávok</h2><div class="chart" id="ch-paper"></div></div>
     <div class="card"><h2>Posledné tipy</h2><div class="tbl"><table id="t-paper"></table></div></div>
+    <div class="card"><h2>Vlastná história kurzov</h2><div class="sub">Každé ráno sa uložia kurzy všetkých zápasov a po zápase sa porovná model s trhom. Časom z toho vznikne vlastný backtest nezávislý od tennis-data.co.uk.</div><div id="hist" style="margin-top:10px"></div></div>
   </section>
 
   <section id="tab-elo" hidden>
@@ -197,6 +201,7 @@ details summary { cursor: pointer; color: var(--ink-2); }
         <li><b>Elo ratingy</b> – každý hráč má celkový rating a rating pre každý povrch. Po každom zápase sa upravia podľa toho, či výsledok bol prekvapenie.</li>
         <li><b>Kalibrácia</b> – logistická regresia spojí celkové a povrchové Elo, rebríček, skúsenosti a pauzu od posledného zápasu do jednej pravdepodobnosti. Učí sa len na minulých rokoch.</li>
         <li><b>Value</b> – ak model dáva hráčovi pravdepodobnosť <i>p</i> a kurz je <i>k</i>, výhoda je <i>edge = p × k − 1</i>. Tip sa ukáže, keď je edge nad prahom z backtestu.</li>
+        <li><b>CLV (closing line value)</b> – porovnanie kurzu v čase tipu s kurzom tesne pred zápasom. Ak si tipoval kurz 2,20 a pred zápasom je 2,00, trh sa posunul k tvojmu názoru (+10 % CLV). Dlhodobo kladné CLV je najspoľahlivejší znak skutočnej výhody.</li>
         <li><b>Férový kurz</b> = 1 / p. <b>Min. kurz</b> = najnižší kurz, pri ktorom je tip ešte value – porovnaj ho s kurzom vo svojej stávkovej kancelárii.</li>
       </ol>
       <h2>Na čo si dať pozor</h2>
@@ -371,7 +376,7 @@ function calibChart(host, bins) {
 }
 
 /* ---------- state ---------- */
-let P = null, B = null, R = null, T = null;
+let P = null, B = null, R = null, T = null, H = null;
 
 function renderVerdict() {
   const el = $("#verdict"); el.replaceChildren();
@@ -470,17 +475,44 @@ function renderBT() {
 
 function renderPaper() {
   const tl = $("#pp-tiles"); tl.replaceChildren();
-  if (!T) { tl.append(h("div", { class: "empty" }, "Zatiaľ žiadne papierové stávky.")); return; }
+  const ct = $("#clv-tiles"); ct.replaceChildren();
+  if (!T) { tl.append(h("div", { class: "empty" }, "Zatiaľ žiadne papierové stávky.")); renderHist(); return; }
   const tile = (l, v, d, cls) => h("div", { class: "tile" }, h("div", { class: "l" }, l), h("div", { class: "v " + (cls || "") }, v), d ? h("div", { class: "d" }, d) : null);
+  const sc = (x) => x > 0 ? "pos" : x < 0 ? "negt" : "";
   tl.append(tile("Vyhodnotené", num(T.settled, 0), `čaká ${T.pending}`), tile("Výhry", num(T.won, 0), T.settled ? pct(T.won / T.settled) : ""),
-    tile("ROI", spct(T.roi), T.avg_odds ? `priem. kurz ${num(T.avg_odds)}` : "", T.roi > 0 ? "pos" : T.roi < 0 ? "negt" : ""),
-    tile("Zisk", sgn(T.profit, 2) + " j.", "vklad 1 j. / tip", T.profit > 0 ? "pos" : T.profit < 0 ? "negt" : ""));
+    tile("ROI", spct(T.roi), T.avg_odds ? `priem. kurz ${num(T.avg_odds)}` : "", sc(T.roi)),
+    tile("Zisk", sgn(T.profit, 2) + " j.", "vklad 1 j. / tip", sc(T.profit)));
+  const C = T.clv || {};
+  ct.append(
+    tile("Tipy so záverečným kurzom", num(C.n || 0, 0), "potrebných aspoň 30–50"),
+    tile("Priemerné CLV", spct(C.avg), "kurz tipu / záverečný kurz − 1", sc(C.avg)),
+    tile("Lepší kurz ako záverečný", pct(C.beat_close, 0), "nad 50 % je dobré znamenie"),
+    tile("Očak. výnos podľa trhu", spct(C.avg_ev), "voči záverečnému kurzu Pinnacle", sc(C.avg_ev)));
   lineChart($("#ch-paper"), (T.curve || []).map((p) => ({ x: new Date(p.date), y: p.cum })), { yFmt: (v) => sgn(v, 1) + " j." });
   const ST = { pending: "čaká", won: "výhra", lost: "prehra", void: "zrušená" };
-  table($("#t-paper"), ["Začiatok", "Tip", "Súper", "Turnaj", "Kurz", "Model", "Edge", "Stav", "Zisk"], (T.recent || []).map((b) => [
-    when(b.start), b.player, b.opponent, b.tournament, num(b.odds), pct(b.p_model), spct(b.edge),
+  table($("#t-paper"), ["Začiatok", "Tip", "Súper", "Turnaj", "Kurz", "Záv. kurz", "CLV", "Model", "Edge", "Stav", "Zisk"], (T.recent || []).map((b) => [
+    when(b.start), b.player, b.opponent, b.tournament, num(b.odds), b.close_odds == null ? "–" : num(b.close_odds),
+    b.clv == null ? "–" : h("span", { class: sc(b.clv) }, spct(b.clv)), pct(b.p_model), spct(b.edge),
     b.status === "won" ? h("span", { class: "badge good" }, ST[b.status]) : h("span", { class: "badge" }, ST[b.status] || b.status),
-    b.profit == null ? "–" : h("span", { class: b.profit > 0 ? "pos" : b.profit < 0 ? "negt" : "" }, sgn(b.profit, 2))]), [4, 5, 6, 8]);
+    b.profit == null ? "–" : h("span", { class: sc(b.profit) }, sgn(b.profit, 2))]), [4, 5, 6, 7, 8, 10]);
+  renderHist();
+}
+
+function renderHist() {
+  const el = $("#hist"); el.replaceChildren();
+  if (!H || !H.snapshots) { el.append(h("div", { class: "empty" }, "Zatiaľ žiadne uložené kurzy – pribudnú pri najbližšom rannom behu.")); return; }
+  el.append(h("div", { class: "note" }, `Uložené snímky kurzov: ${num(H.snapshots, 0)} · zápasy: ${num(H.events, 0)} · vyhodnotené zápasy: ${num(H.settled_events || 0, 0)}`));
+  const rows = [["Model", H.model], ["Trh ráno (bez marže)", H.market_open], ["Trh pred zápasom (bez marže)", H.market_close]].filter((r) => r[1]);
+  if (rows.length) {
+    const t = h("table", {});
+    table(t, ["Metóda", "Zápasy", "Presnosť", "Log loss"], rows.map(([n, m]) => [n, num(m.n, 0), pct(m.accuracy), num(m.log_loss, 3)]), [1, 2, 3]);
+    el.append(h("div", { class: "tbl", style: "margin-top:8px" }, t));
+  }
+  const extra = [];
+  if (H.strategy) extra.push(`Value stratégia na ranných priemerných kurzoch: ${num(H.strategy.bets, 0)} stávok, ROI ${spct(H.strategy.roi)}.`);
+  if (H.market_moves_toward_model != null) extra.push(`Trh sa od rána pohol smerom k modelu v ${pct(H.market_moves_toward_model, 0)} prípadov (${H.market_moved_n} zápasov s pohybom kurzu).`);
+  for (const e of extra) el.append(h("p", { class: "note" }, e));
+  if (!rows.length) el.append(h("p", { class: "note" }, "Zatiaľ nie sú vyhodnotené zápasy – porovnanie sa objaví po prvých odohraných zápasoch."));
 }
 
 function renderElo() {
@@ -552,7 +584,7 @@ let rt; window.addEventListener("resize", () => { clearTimeout(rt); rt = setTime
 function renderAll() { renderVerdict(); renderTips(); renderBT(); renderPaper(); renderElo(); renderCalc(); }
 
 (async () => {
-  [P, B, R, T] = await Promise.all([load("predictions.json"), load("backtest.json"), load("ratings.json"), load("tracker.json")]);
+  [P, B, R, T, H] = await Promise.all([load("predictions.json"), load("backtest.json"), load("ratings.json"), load("tracker.json"), load("history.json")]);
   const g = P?.generated_at || B?.generated_at;
   $("#fresh").textContent = g ? `Aktualizované ${new Date(g).toLocaleString("sk-SK", { timeZone: TZ })} · výsledky v dátach do ${new Date(R?.data_until || B?.data_until).toLocaleDateString("sk-SK")}` : "Dáta ešte nie sú vygenerované – spusti workflow v GitHub Actions.";
   let saved = null; try { saved = localStorage.getItem("tab"); } catch {}
