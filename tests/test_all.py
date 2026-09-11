@@ -77,6 +77,30 @@ def test_bo5_conversion():
     assert abs(bo3_to_bo5(np.array([q * q * (3 - 2 * q)]))[0] - q ** 3 * (10 - 15 * q + 6 * q * q)) < 1e-6
 
 
+def test_own_history_eval():
+    import pandas as pd
+    from src import odds_store
+    t0 = pd.Timestamp("2026-09-01 08:00", tz="UTC")
+    snaps = pd.DataFrame([
+        # ráno: model 60 % na A, trh 50 %; pred zápasom trh 55 % -> pohyb k modelu
+        dict(snap_at=t0, event_id="x", start=t0 + pd.Timedelta(hours=6), key_a="ATP|A", key_b="ATP|B", p_a=0.6,
+             avg_a=1.95, avg_b=1.95, pin_a=2.0, pin_b=2.0),
+        dict(snap_at=t0 + pd.Timedelta(hours=5), event_id="x", start=t0 + pd.Timedelta(hours=6), key_a=None, key_b=None,
+             p_a=float("nan"), avg_a=1.75, avg_b=2.15, pin_a=1.8, pin_b=2.2),
+        dict(snap_at=t0, event_id="y", start=t0 + pd.Timedelta(hours=8), key_a="ATP|C", key_b="ATP|D", p_a=0.3,
+             avg_a=2.5, avg_b=1.5, pin_a=2.6, pin_b=1.55),
+    ])
+    hist = pd.DataFrame([
+        dict(start=pd.Timestamp("2026-08-31"), w_key="ATP|A", l_key="ATP|B", comment="Completed"),
+        dict(start=pd.Timestamp("2026-08-31"), w_key="ATP|D", l_key="ATP|C", comment="Completed"),
+    ])
+    out = odds_store.evaluate(snaps, hist, threshold=0.05)
+    assert out["settled_events"] == 2
+    assert out["model"]["accuracy"] == 1.0
+    assert out["market_moves_toward_model"] == 1.0
+    assert out["strategy"]["bets"] == 1 and abs(out["strategy"]["roi"] - 0.95) < 1e-9  # A @1.95 vyhral
+
+
 # ---------- celá pipeline s falošným The Odds API ----------
 class FakeResp:
     def __init__(self, data, remaining=450):
@@ -173,6 +197,30 @@ def test_pipeline(workdir, monkeypatch):
     log = pd.read_csv("state/bet_log.csv")
     assert (log["status"] == "pending").sum() >= 1
 
+    # hodinu pred zápasom: rýchla snímka kurzov -> záverečný kurz a CLV (kurz na favorita medzitým klesol)
+    soon = (pd.Timestamp.now(tz="UTC") + pd.Timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    log.loc[:, "start"] = soon
+    log.loc[:, "created_at"] = (pd.Timestamp.now(tz="UTC") - pd.Timedelta(hours=3)).isoformat()
+    log.to_csv("state/bet_log.csv", index=False)
+    sess.events = [_event("e1", top[0], top[40], 2.4, 1.6, soon)]
+    n_calls = len(sess.calls)
+    monkeypatch.setattr(sys, "argv", ["run.py", "snapshot"])
+    run.main()
+    assert len(sess.calls) == n_calls + 1          # jediný dopyt na /odds, žiadne /sports ani /scores
+    log = pd.read_csv("state/bet_log.csv")
+    r = log[log["bet_id"].str.startswith("e1|")].iloc[0]
+    assert abs(r["close_odds"] - round((2.4 + 2.4 * 0.97 + 2.4 * 1.02) / 3, 3)) < 0.01
+    assert r["clv"] > 0.3 and r["clv_ev"] > 0
+    tr = json.load(open("docs/data/tracker.json"))
+    assert tr["clv"]["n"] == 1 and tr["clv"]["beat_close"] == 1.0
+    # snímka bez tipov pred začiatkom nesmie míňať kredity
+    log.loc[:, "start"] = fut
+    log.to_csv("state/bet_log.csv", index=False)
+    n_calls = len(sess.calls)
+    run.main()
+    assert len(sess.calls) == n_calls
+    monkeypatch.setattr(sys, "argv", ["run.py", "update", "--offline"])
+
     # druhý deň: zápas e1 je odohraný, vyhodnotenie cez /scores
     log.loc[:, "start"] = (pd.Timestamp.now(tz="UTC") - pd.Timedelta(hours=5)).isoformat()
     log.to_csv("state/bet_log.csv", index=False)
@@ -184,6 +232,8 @@ def test_pipeline(workdir, monkeypatch):
     assert r["status"] == "won" and abs(r["profit"] - (r["odds"] - 1)) < 1e-9
     tr = json.load(open("docs/data/tracker.json"))
     assert tr["settled"] >= 1 and tr["won"] >= 1
+    h = json.load(open("docs/data/history.json"))
+    assert h["snapshots"] >= 5 and h["events"] >= 3
 
 
 class _MP:
@@ -210,7 +260,7 @@ class _MP:
 
 
 if __name__ == "__main__":
-    for t in [test_parse_td, test_match_real_names, test_canonical_merge, test_bo5_conversion]:
+    for t in [test_parse_td, test_match_real_names, test_canonical_merge, test_bo5_conversion, test_own_history_eval]:
         t()
         print("OK", t.__name__)
     d, mp = _workdir(), _MP()
