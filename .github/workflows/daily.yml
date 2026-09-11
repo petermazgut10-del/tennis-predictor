@@ -1,0 +1,47 @@
+name: Tenisové predikcie
+
+on:
+  schedule:
+    - cron: "0 5 * * *"     # každý deň o 5:00 UTC (7:00 v lete / 6:00 v zime v SR)
+  workflow_dispatch:         # ručné spustenie tlačidlom "Run workflow"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: predictor
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Cache historických dát
+        uses: actions/cache@v4
+        with:
+          path: data/raw
+          key: tennis-raw-${{ github.run_id }}
+          restore-keys: tennis-raw-
+
+      - name: Aktualizácia predikcií
+        env:
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+        run: python run.py update
+
+      - name: Uloženie výsledkov
+        run: |
+          git config user.name "tennis-bot"
+          git config user.email "tennis-bot@users.noreply.github.com"
+          git add docs/data state
+          git diff --cached --quiet || git commit -m "Predikcie $(date -u +'%Y-%m-%d %H:%M') UTC"
+          git push
