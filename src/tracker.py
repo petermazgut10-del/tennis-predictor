@@ -11,7 +11,8 @@ import config
 
 COLS = ["bet_id", "created_at", "start", "sport_key", "tournament", "tour", "surface", "player", "opponent",
         "player_key", "opponent_key", "p_model", "odds_basis", "odds", "best_odds", "best_book", "edge",
-        "kelly_pct", "stake", "status", "settled_at", "profit", "note"]
+        "kelly_pct", "stake", "status", "settled_at", "profit", "note",
+        "close_odds", "close_fair_p", "close_at", "clv", "clv_ev"]
 
 
 def path() -> str:
@@ -132,5 +133,14 @@ def summary(log: pd.DataFrame) -> dict:
         "avg_odds": float(s["odds"].mean()) if len(s) else None,
         "curve": [{"date": str(r.start)[:10], "cum": round(float(c), 2)} for r, c in zip(s.itertuples(), s["profit"].cumsum())],
         "recent": log.sort_values("start", ascending=False).head(60).replace({np.nan: None}).to_dict("records"),
+    }
+    c = log[pd.to_numeric(log["clv"], errors="coerce").notna()]
+    clv = pd.to_numeric(c["clv"], errors="coerce")
+    ev = pd.to_numeric(c["clv_ev"], errors="coerce").dropna()
+    out["clv"] = {
+        "n": int(len(c)),
+        "avg": float(clv.mean()) if len(c) else None,
+        "beat_close": float((clv > 0).mean()) if len(c) else None,
+        "avg_ev": float(ev.mean()) if len(ev) else None,
     }
     return out
