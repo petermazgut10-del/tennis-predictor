@@ -1,4 +1,5 @@
-"""Vyrobí syntetické súbory vo formáte tennis-data.co.uk na otestovanie celej pipeline bez internetu.
+"""Vyrobí syntetické súbory vo formáte TennisMyLife (výsledky) a tennis-data.co.uk (kurzy)
+na otestovanie celej pipeline bez internetu.
 
 Hráči majú skrytú "skutočnú" silu (celkovú + podľa povrchu), ktorá sa v čase mení.
 Kurzy stávkových kancelárií = skutočná pravdepodobnosť + šum + marža.
@@ -29,6 +30,7 @@ def make_players(rng, tour, n=320):
             continue
         used.add((l, init[0]))
         players.append({
+            "id": f"{tour[0]}{len(players):04d}",
             "full": f"{f} {l}", "td": f"{l} {init}", "skill": rng.normal(0, 1.0),
             "surf": {"Hard": rng.normal(0, 0.35), "Clay": rng.normal(0, 0.45), "Grass": rng.normal(0, 0.4)},
             "debut": rng.integers(2008, 2025),
@@ -48,7 +50,8 @@ def true_p(a, b, surface, best_of):
 def generate(out_dir: str, start=2011, end=None, seed=1, bookie_noise=0.25, margin=0.05):
     end = end or dt.date.today().year
     rng = np.random.default_rng(seed)
-    os.makedirs(out_dir, exist_ok=True)
+    os.makedirs(os.path.join(out_dir, "tml"), exist_ok=True)
+    os.makedirs(os.path.join(out_dir, "odds"), exist_ok=True)
     tourneys = [("Melbourne", "Australian Open", "Hard", 1, "Grand Slam"), ("Doha", "Qatar Open", "Hard", 2, "ATP500"),
                 ("Indian Wells", "BNP Paribas Open", "Hard", 3, "Masters 1000"), ("Monte Carlo", "Monte Carlo Masters", "Clay", 4, "Masters 1000"),
                 ("Madrid", "Mutua Madrid Open", "Clay", 5, "Masters 1000"), ("Paris", "French Open", "Clay", 5, "Grand Slam"),
@@ -64,8 +67,8 @@ def generate(out_dir: str, start=2011, end=None, seed=1, bookie_noise=0.25, marg
             active = [p for p in players if p["debut"] <= year]
             ranked = sorted(active, key=lambda p: -p["skill"])
             rank = {p["full"]: i + 1 for i, p in enumerate(ranked)}
-            rows = []
-            for loc, name, surf, month, series in tourneys:
+            rows, tml_rows = [], []
+            for ti, (loc, name, surf, month, series) in enumerate(tourneys):
                 if year == end and month > dt.date.today().month - 1:
                     continue
                 gs = series == "Grand Slam"
@@ -105,10 +108,22 @@ def generate(out_dir: str, start=2011, end=None, seed=1, bookie_noise=0.25, marg
                             "MaxW": round(oddsw * 1.04, 2), "MaxL": round(oddsl * 1.04, 2),
                             "AvgW": round(oddsw, 2), "AvgL": round(oddsl, 2),
                         })
+                        tml_rows.append({
+                            "tourney_id": f"{year}-{ti}", "tourney_name": loc, "surface": surf, "draw_size": size,
+                            "tourney_level": "G" if gs else "M", "indoor": "O", "tourney_date": day.strftime("%Y%m%d"),
+                            "match_num": len(tml_rows) + 1, "winner_id": w["id"], "winner_name": w["full"],
+                            "winner_rank": rank[w["full"]], "loser_id": l["id"], "loser_name": l["full"],
+                            "loser_rank": rank[l["full"]],
+                            "score": {"Completed": "6-4 6-4", "Retired": "6-4 2-1 RET", "Walkover": "W/O"}[comment],
+                            "best_of": best_of, "round": ["R128", "R64", "R32", "R16", "QF", "SF", "F"][-int(np.log2(size)):][ri],
+                        })
+                        rows[-1]["Date"] = day + dt.timedelta(days=ri * (2 if gs else 1))
                         nxt.append(w)
                     draw = nxt
                     ri += 1
-            pd.DataFrame(rows).to_excel(os.path.join(out_dir, f"{tour}_{year}.xlsx"), index=False)
+            pd.DataFrame(rows).to_excel(os.path.join(out_dir, "odds", f"{tour}_{year}.xlsx"), index=False)
+            fname = f"{year}.csv" if tour == "ATP" else f"{year}_wta.csv"
+            pd.DataFrame(tml_rows).to_csv(os.path.join(out_dir, "tml", fname), index=False)
         pd.DataFrame(players)[["full", "td", "skill"]].to_csv(os.path.join(out_dir, f"_players_{tour}.csv"), index=False)
 
 

@@ -19,7 +19,7 @@ sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, "tests"))
 
 from src.model import bo3_to_bo5  # noqa: E402
-from src.names import PlayerIndex, canonical_map, parse_td, td_key  # noqa: E402
+from src.names import FullNameIndex, canonical_map, parse_td, td_key  # noqa: E402
 
 
 # ---------- mená ----------
@@ -50,13 +50,15 @@ def test_parse_td():
 
 def test_match_real_names():
     players = {}
-    for td in REAL:
+    for i, (td, full) in enumerate(REAL.items()):
         tour = "WTA" if td.startswith(("Pliskova", "Swiatek")) else "ATP"
-        players[f"{tour}|{td_key(td)}"] = {"name": td, "last": "2026-01-01", "n": 50}
-    idx = PlayerIndex(players)
-    for td, full in REAL.items():
+        players[f"{tour}|{i}"] = {"name": full.replace("Świątek", "Swiatek"), "last": "2026-01-01", "n": 50}
+    idx = FullNameIndex(players)
+    for i, (td, full) in enumerate(REAL.items()):
         tour = "WTA" if td.startswith(("Pliskova", "Swiatek")) else "ATP"
-        assert idx.match(full, tour) == f"{tour}|{td_key(td)}", full
+        assert idx.match(full, tour) == f"{tour}|{i}", full
+        assert idx.match_td(td, tour) == f"{tour}|{i}", td
+    assert idx.match("Zhang Zhizhen", "ATP") == idx.match("Zhizhen Zhang", "ATP")
     assert idx.match("Unknown Player", "ATP") is None
 
 
