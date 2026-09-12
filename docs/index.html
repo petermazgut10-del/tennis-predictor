@@ -583,6 +583,11 @@ function renderScores() {
     tile("Overené zápasy", num(S.n, 0), "so štatistikou podania"),
     tile("Gemy: model vs realita", `${num(S.pred_games, 1)} / ${num(S.actual_games, 1)}`, `priemerná odchýlka ${num(S.mae_games, 1)} gemu`),
     tile("Bez straty setu", `${pct(S.pred_straight, 0)} / ${pct(S.actual_straight, 0)}`, "model / realita")));
+  const bias = S.pred_games - S.actual_games, sbias = S.pred_straight - S.actual_straight;
+  if (Math.abs(bias) > 0.5 || Math.abs(sbias) > 0.03) {
+    el.append(h("p", { class: "note" },
+      `Model bodov zatiaľ predpovedá o ${num(Math.abs(bias), 1)} gemu ${bias > 0 ? "viac" : "menej"} než je realita a jednoznačných zápasov (bez straty setu) čaká ${pct(Math.abs(sbias), 0)} ${sbias > 0 ? "viac" : "menej"}. Je to známa vlastnosť predpokladu nezávislých bodov – skutočné zápasy bývajú jednoznačnejšie. Na tipovanie víťaza to vadí málo, ale pred stávkami na gemy a hendikepy treba tieto čísla najprv skorigovať.`));
+  }
   if (S.over_bins?.length) {
     const t = h("table", {});
     table(t, ["Model: šanca na viac gemov", "Realita", "Zápasy"], S.over_bins.map((b) => [pct(b.pred), pct(b.actual), num(b.n, 0)]), [0, 1, 2]);
@@ -707,7 +712,8 @@ function renderCalc() {
         h("span", {}, "Body na podaní"), h("span", {}, `${pct(cal[0], 1)} / ${pct(cal[1], 1)}`),
         h("span", {}, "Očakávaný počet gemov"), h("span", {}, num(d.expGames, 1)),
         h("span", {}, "Zápas na 2 sety (bez straty setu)"), h("span", {}, pct(straight)),
-        h("span", {}, "Najpravdepodobnejšie skóre v setoch"), h("span", {}, rows.slice(0, 3).join(" · ")))));
+        h("span", {}, "Najpravdepodobnejšie skóre v setoch"), h("span", {}, rows.slice(0, 3).join(" · "))),
+      h("p", { class: "note", style: "margin:8px 0 0" }, "Orientačné. Podľa kontroly v záložke Backtest model zatiaľ nadhodnocuje počet gemov a podhodnocuje jednoznačné výsledky.")));
   }
   if (Math.min(a.n, b.n) < 15) out.append(h("p", { class: "note" }, "Pozor: jeden z hráčov má v histórii málo zápasov, odhad je neistý."));
 }
