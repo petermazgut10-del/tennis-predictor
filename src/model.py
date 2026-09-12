@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 from sklearn.linear_model import LogisticRegression
 
-FEATURES = ["d_all", "d_surf", "d_rank", "d_exp", "d_sexp", "d_days", "d_all_bo5", "d_surf_bo5"]
+FEATURES = ["d_all", "d_surf", "d_rank", "d_exp", "d_sexp", "d_days", "d_all_bo5", "d_surf_bo5", "d_markov"]
 RANK_FILL = 1500.0
 
 
@@ -30,6 +30,9 @@ def features(a: dict | pd.DataFrame, b_prefix_swap: bool = False, best_of=3) -> 
     X["d_days"] = np.log1p(s["a_days"]) - np.log1p(s["b_days"])
     X["d_all_bo5"] = X["d_all"] * bo5
     X["d_surf_bo5"] = X["d_surf"] * bo5
+    # model na úrovni bodov (podanie/return -> šanca na výhru zápasu); chýba -> 0,5 -> žiadny vplyv
+    mk = s["a_mk"].astype(float).fillna(0.5).clip(0.001, 0.999) if "a_mk" in s.columns else pd.Series(0.5, index=s.index)
+    X["d_markov"] = np.log(mk / (1 - mk))
     return X[FEATURES]
 
 
@@ -65,15 +68,16 @@ def oriented(feats: pd.DataFrame, best_of: np.ndarray, seed: int = 7):
 
 
 class Calibrated:
-    def __init__(self, C: float = 1.0):
+    def __init__(self, C: float = 1.0, feats: list[str] | None = None):
         self.lr = LogisticRegression(fit_intercept=False, C=C, max_iter=1000)
+        self.feats = feats or FEATURES
 
     def fit(self, X: pd.DataFrame, y: np.ndarray):
-        self.lr.fit(X.values, y)
+        self.lr.fit(X[self.feats].values, y)
         return self
 
     def proba(self, X: pd.DataFrame) -> np.ndarray:
-        return self.lr.predict_proba(X[FEATURES].values)[:, 1]
+        return self.lr.predict_proba(X[self.feats].values)[:, 1]
 
     def to_json(self) -> dict:
-        return {"features": FEATURES, "coef": [float(c) for c in self.lr.coef_[0]], "rank_fill": RANK_FILL}
+        return {"features": self.feats, "coef": [float(c) for c in self.lr.coef_[0]], "rank_fill": RANK_FILL}

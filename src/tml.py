@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import datetime as dt
 import os
+import re
 import time
 
 import numpy as np
@@ -74,6 +75,30 @@ def download(verbose: bool = True) -> None:
         print(f"   TennisMyLife: stiahnuté {ok}/{len(todo)} súborov")
 
 
+SET_RE = re.compile(r"(\d+)\s*-\s*(\d+)(?:\s*\((\d+)\))?")
+
+
+def parse_score(score: str) -> tuple[float, float, float, float, bool]:
+    """'6-4 3-6 7-6(5)' -> (gemy víťaza, gemy porazeného, sety, sety, kompletné skóre?)"""
+    s = str(score)
+    up = s.upper()
+    if not s or "W/O" in up or "WALKOVER" in up or "DEF" in up:
+        return (np.nan, np.nan, np.nan, np.nan, False)
+    gw = gl = sw = sl = 0
+    for m in SET_RE.finditer(s):
+        a, b = int(m.group(1)), int(m.group(2))
+        if a > 30 or b > 30:
+            continue
+        gw += a
+        gl += b
+        sw += a > b
+        sl += b > a
+    if sw + sl == 0:
+        return (np.nan, np.nan, np.nan, np.nan, False)
+    complete = ("RET" not in up and "ABN" not in up and "ABD" not in up and sw > sl)
+    return (gw, gl, sw, sl, complete)
+
+
 def _read(path: str, tour: str, ongoing: bool) -> pd.DataFrame:
     raw = pd.read_csv(path, dtype=str, keep_default_na=False)
     if raw.empty:
@@ -104,6 +129,23 @@ def _read(path: str, tour: str, ongoing: bool) -> pd.DataFrame:
     d["l_rank"] = pd.to_numeric(raw["loser_rank"], errors="coerce")
     score = raw["score"].str.upper()
     d["score"] = raw["score"]
+    # štatistiky podania (nie sú pri každom zápase)
+    def num(c):
+        return pd.to_numeric(raw[c], errors="coerce") if c in raw.columns else pd.Series(np.nan, index=raw.index)
+
+    w_won = num("w_1stWon") + num("w_2ndWon")
+    l_won = num("l_1stWon") + num("l_2ndWon")
+    d["w_svpt"], d["l_svpt"] = num("w_svpt"), num("l_svpt")
+    d["w_spw"] = (w_won / d["w_svpt"]).where(d["w_svpt"] >= 20)
+    d["l_spw"] = (l_won / d["l_svpt"]).where(d["l_svpt"] >= 20)
+    bad = (d["w_spw"] < 0.2) | (d["w_spw"] > 0.95) | (d["l_spw"] < 0.2) | (d["l_spw"] > 0.95)
+    d.loc[bad.fillna(False), ["w_spw", "l_spw"]] = np.nan
+    g = raw["score"].map(parse_score)
+    d["games_w"] = [x[0] for x in g]
+    d["games_l"] = [x[1] for x in g]
+    d["sets_w"] = [x[2] for x in g]
+    d["sets_l"] = [x[3] for x in g]
+    d["score_ok"] = [x[4] for x in g]
     d["comment"] = np.where(score.str.contains("W/O|WALKOVER|DEF", regex=True), "Walkover",
                             np.where(score.str.contains("RET|ABN|ABD", regex=True), "Retired", "Completed"))
     return d

@@ -7,8 +7,10 @@ import numpy as np
 import pandas as pd
 
 import config
+from src import markov
 from src.elo import EloBook
 from src.model import Calibrated, features
+from src.serve import ServeBook
 from src.names import FullNameIndex
 from src.surfaces import best_of_for, surface_for, tour_for
 
@@ -73,7 +75,7 @@ def kelly_pct(p: float, o: float) -> float:
     return float(min(f, config.MAX_STAKE_PCT))
 
 
-def predict_events(events: list[dict], sport: dict, book: EloBook, model: Calibrated,
+def predict_events(events: list[dict], sport: dict, book: EloBook, srv: ServeBook, model: Calibrated,
                    idx: FullNameIndex, threshold: float, now: dt.datetime) -> tuple[list[dict], list[str]]:
     key = sport["key"]
     tour = tour_for(key)
@@ -101,11 +103,18 @@ def predict_events(events: list[dict], sport: dict, book: EloBook, model: Calibr
             out.append(row)
             continue
         snap = snapshot(book, ka, kb, surface, start.tz_localize(None))
+        sa, sb = srv.get(ka), srv.get(kb)
+        spw_a = srv.expected(sa, sb, tour, surface)
+        spw_b = srv.expected(sb, sa, tour, surface)
+        snap["a_spw"], snap["b_spw"] = spw_a, spw_b
+        has_serve = min(sa.n, sb.n) >= config.MIN_SERVE_MATCHES
+        snap["a_mk"] = float(markov.match_prob(round(spw_a, 3), round(spw_b, 3), best_of)) if has_serve else 0.5
         X = features(pd.DataFrame([snap]), best_of=best_of)
         p = float(model.proba(X)[0])
         row["p"] = [p, 1 - p]
         row["fair_odds"] = [1 / max(p, 1e-6), 1 / max(1 - p, 1e-6)]
         row["elo"] = [[round(snap["a_elo"]), round(snap["a_surf"])], [round(snap["b_elo"]), round(snap["b_surf"])]]
+        row["spw"] = [round(spw_a, 3), round(spw_b, 3)] if has_serve else None
         row["n"] = [int(snap["a_n"]), int(snap["b_n"])]
         row["rank"] = [None if np.isnan(snap["a_rank"]) else int(snap["a_rank"]),
                        None if np.isnan(snap["b_rank"]) else int(snap["b_rank"])]

@@ -8,7 +8,8 @@ import numpy as np
 import pandas as pd
 
 import config
-from src.model import Calibrated, elo_prob, features, oriented
+from src import markov
+from src.model import FEATURES, Calibrated, elo_prob, features, oriented
 
 EPS = 1e-9
 
@@ -25,6 +26,8 @@ def walk_forward(df: pd.DataFrame, feats: pd.DataFrame) -> pd.DataFrame:
     Xw = features(feats, best_of=d["best_of"].values)
     d["p_elo_w"] = elo_prob(Xw, d["best_of"].values)
     d["p_model_w"] = np.nan
+    d["p_noserve_w"] = np.nan   # ten istý model bez informácie o podaní (na porovnanie prínosu)
+    base_feats = [f for f in FEATURES if f != "d_markov"]
     years = sorted(d["year"].unique())
     for y in [y for y in years if y >= config.BACKTEST_FIRST_YEAR]:
         tr = d["year"].between(y - config.CALIB_TRAIN_YEARS, y - 1)
@@ -32,8 +35,8 @@ def walk_forward(df: pd.DataFrame, feats: pd.DataFrame) -> pd.DataFrame:
         if tr.sum() < 500:
             continue
         X, yy = oriented(feats[tr], d.loc[tr, "best_of"].values, seed=y)
-        m = Calibrated().fit(X, yy)
-        d.loc[te, "p_model_w"] = m.proba(Xw[te])
+        d.loc[te, "p_model_w"] = Calibrated().fit(X, yy).proba(Xw[te])
+        d.loc[te, "p_noserve_w"] = Calibrated(feats=base_feats).fit(X, yy).proba(Xw[te])
     return d
 
 
@@ -52,7 +55,7 @@ def fit_latest(df: pd.DataFrame, feats: pd.DataFrame) -> Calibrated:
 def accuracy_table(d: pd.DataFrame) -> list[dict]:
     """Presnosť na zápasoch s kurzami Pinnacle (férové porovnanie s trhom); bez kurzov na všetkých zápasoch."""
     t = d.dropna(subset=["p_model_w", "odds_w_pinnacle", "odds_l_pinnacle"]).copy()
-    methods = [("Model (Elo + kalibrácia)", "p_model_w"), ("Čisté Elo", "p_elo_w")]
+    methods = [("Model (Elo + podanie)", "p_model_w"), ("Model bez podania", "p_noserve_w"), ("Čisté Elo", "p_elo_w")]
     if len(t) >= 200:
         t["p_pin_w"] = no_vig(t["odds_w_pinnacle"], t["odds_l_pinnacle"])
         methods.append(("Pinnacle (trh)", "p_pin_w"))
@@ -90,6 +93,41 @@ def calibration_bins(d: pd.DataFrame, col: str = "p_model_w", bins: int = 10) ->
         if m.sum() >= 30:
             out.append({"pred": float(p[m].mean()), "actual": float(y[m].mean()), "n": int(m.sum())})
     return out
+
+
+def validate_scores(d: pd.DataFrame, feats: pd.DataFrame, sample: int = 6000, seed: int = 11) -> dict:
+    """Overí model na úrovni bodov proti skutočnému skóre: počet gemov a 2:0 vs 2:1."""
+    idx = d.index[(d["p_model_w"].notna()) & (d.get("score_ok", False) == True)]   # noqa: E712
+    f = feats.loc[feats.index.intersection(idx)]
+    f = f[(f.get("a_mk", pd.Series(0.5, index=f.index)) != 0.5)]
+    if len(f) < 200:
+        return {"n": 0}
+    if len(f) > sample:
+        f = f.sample(sample, random_state=seed)
+    dd = d.loc[f.index]
+    pa, pb = markov.calibrate_vec(f["a_spw"], f["b_spw"], dd["p_model_w"], dd["best_of"])
+    rows = []
+    for (p_a, p_b, bo, ga, gl, sw, sl) in zip(pa, pb, dd["best_of"], dd["games_w"], dd["games_l"],
+                                              dd["sets_w"], dd["sets_l"]):
+        m = markov.match_dist(round(float(p_a), 3), round(float(p_b), 3), int(bo))
+        need = int(bo) // 2 + 1
+        straight = sum(v for (x, y), v in m["sets"].items() if x + y == need)
+        tot = ga + gl
+        line = m["exp_games"]
+        p_over = sum(v for g, v in m["games"].items() if g > line)
+        rows.append((m["exp_games"], tot, straight, int(sw + sl == need), p_over, int(tot > line)))
+    r = pd.DataFrame(rows, columns=["exp_games", "games", "p_straight", "straight", "p_over", "over"])
+    bins = []
+    q = pd.qcut(r["p_over"], 5, duplicates="drop")
+    for k, g in r.groupby(q, observed=True):
+        bins.append({"pred": float(g["p_over"].mean()), "actual": float(g["over"].mean()), "n": int(len(g))})
+    return {
+        "n": int(len(r)),
+        "pred_games": float(r["exp_games"].mean()), "actual_games": float(r["games"].mean()),
+        "mae_games": float((r["exp_games"] - r["games"]).abs().mean()),
+        "pred_straight": float(r["p_straight"].mean()), "actual_straight": float(r["straight"].mean()),
+        "over_bins": bins,
+    }
 
 
 def bet_candidates(d: pd.DataFrame, basis: str) -> pd.DataFrame:
@@ -142,6 +180,9 @@ def kelly_curve(b: pd.DataFrame) -> list[float]:
 
 def run(df: pd.DataFrame, feats: pd.DataFrame) -> tuple[dict, pd.DataFrame]:
     d = walk_forward(df, feats)
+    for c in ("score_ok", "games_w", "games_l", "sets_w", "sets_l"):
+        if c in df.columns:
+            d[c] = df.loc[d.index, c]
     tested = d[d["p_model_w"].notna()]
     basis = config.VALUE_ODDS_BASIS
     cands = bet_candidates(tested, basis)
@@ -208,6 +249,7 @@ def run(df: pd.DataFrame, feats: pd.DataFrame) -> tuple[dict, pd.DataFrame]:
         "accuracy_all": accuracy_table(tested),
         "accuracy_test": accuracy_table(tested[tested["year"] > config.TUNE_LAST_TRAIN_YEAR]),
         "calibration": calibration_bins(tested),
+        "scores": validate_scores(d, feats),
         "curve": [{"date": str(r.date.date()), "cum": round(float(r.cum), 2)} for r in curve.itertuples()],
         "kelly_final_bankroll": (kelly_curve(test_bets)[-1] if len(test_bets) else 1.0),
         "years": [int(tested["year"].min()), int(tested["year"].max())] if len(tested) else [],
