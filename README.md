@@ -105,6 +105,7 @@ python tests/test_all.py        # testy na syntetických dátach (bez internetu)
 - **GitHub vypne naplánované behy** po 60 dňoch bez aktivity v repozitári – stačí kliknúť *Enable workflow*.
 
 ## Obmedzenia (poctivo)
+- Model na úrovni bodov zatiaľ nadhodnocuje počet gemov (~o 2) a podhodnocuje zápasy bez straty setu. Pre tipy na víťaza je prínos malý, ale pozitívny; pre hendikepy a over/under treba najprv empirickú korekciu.
 - Model nevie o zraneniach, únave ani motivácii. Stávkové kancelárie áno.
 - Ak tennis-data.co.uk nie je dostupné, backtest proti historickým kurzom sa preskočí (stránka to ukáže). Ratingy a tipy fungujú ďalej.
 - Backtest ráta s kurzami tesne pred zápasom; reálne kurzy, za ktoré stihneš staviť, môžu byť iné. Kancelárie tiež obmedzujú úspešných hráčov.
