@@ -6,15 +6,18 @@ Beží zadarmo na GitHube: každé ráno sa sám aktualizuje a výsledky ukáže
 **Čo robí**
 1. Stiahne výsledky zápasov od roku 2011 (ATP, Challengery, WTA) z [TennisMyLife](https://stats.tennismylife.org) – zadarmo, MIT licencia, denne aktualizované – a historické kurzy z [tennis-data.co.uk](http://www.tennis-data.co.uk) na backtest (ak je stránka dostupná).
 2. Vypočíta **Elo ratingy** každého hráča – celkový a pre každý povrch (hard / antuka / tráva).
-3. **Kalibračný model** (logistická regresia) z nich spraví pravdepodobnosť výhry. Model sa vždy učí len na minulosti.
-4. **Backtest**: overí, ako by model dopadol v rokoch 2015–dnes, a porovná ho s Pinnacle (najostrejšou kanceláriou).
+3. Zo štatistík zápasov vypočíta **silu podania a returnu** každého hráča a cez model na úrovni bodov
+   (bod → gem → tajbrejk → set → zápas) z nich odvodí šancu na výhru aj rozdelenie skóre a počtu gemov.
+4. **Kalibračný model** (logistická regresia) spojí Elo, podanie, rebríček a ďalšie signály do jednej pravdepodobnosti.
+   Model sa vždy učí len na minulosti.
+5. **Backtest**: overí, ako by model dopadol v rokoch 2015–dnes, a porovná ho s Pinnacle (najostrejšou kanceláriou).
    Prah výhody sa ladí len na rokoch do 2020, roky 2021+ sú poctivý test.
-5. Stiahne kurzy na nadchádzajúce zápasy z [The Odds API](https://the-odds-api.com) (zadarmo 500 kreditov / mesiac)
+6. Stiahne kurzy na nadchádzajúce zápasy z [The Odds API](https://the-odds-api.com) (zadarmo 500 kreditov / mesiac)
    a označí zápasy, kde je kurz vyšší ako férový kurz modelu.
-6. Každý value tip zapíše ako **papierovú stávku** a po zápase ju vyhodnotí – to je skutočný test bez peňazí.
+7. Každý value tip zapíše ako **papierovú stávku** a po zápase ju vyhodnotí – to je skutočný test bez peňazí.
    Tesne pred začiatkom zápasu uloží aj **záverečný kurz** a spočíta **CLV** (či sa trh po tipe posunul k názoru modelu).
    Každé ráno ukladá kurzy všetkých zápasov → **vlastná história kurzov** a vlastný backtest.
-7. Všetko zobrazí na stránke (GitHub Pages) – vrátane **kalkulačky** pre akýkoľvek zápas (aj 250-ky a Challengery).
+8. Všetko zobrazí na stránke (GitHub Pages) – vrátane **kalkulačky** pre akýkoľvek zápas (aj 250-ky a Challengery).
 
 > The Odds API zadarmo pokrýva len Grand Slamy, turnaje 1000 a 500. Na ostatné zápasy použi kalkulačku a kurzy zo svojej stávkovej kancelárie.
 
@@ -65,6 +68,7 @@ Okrem toho beží každé 2 hodiny krátka kontrola: ak niektorý papierový tip
 | **Min. kurz na value** | najnižší kurz, pri ktorom tip ešte spĺňa prah. Porovnaj s kurzom v Niké / Tipos / Fortune |
 | **Pinnacle (trh)** | pravdepodobnosť podľa najostrejšej kancelárie – keď sa model s trhom veľmi nezhoduje, častejšie má pravdu trh |
 | **Návrh vkladu** | ¼ Kelly, max 2 % bankrollu |
+| **Podanie / Return** | o koľko percentuálnych bodov vyhráva hráč viac bodov na podaní (resp. na returne) ako priemer |
 
 **Verdikt na stránke** (zelený / oranžový pás) hovorí, či backtest ukázal výhodu aj na rokoch, na ktorých sa model neladil.
 Aj pri zelenom verdikte platí: **najprv 2–3 mesiace papierových stávok** (aspoň ~100 vyhodnotených tipov). Až keď sú v pluse, má zmysel uvažovať o reálnych peniazoch alebo o platenom API.
@@ -77,6 +81,7 @@ Všetky nastavenia sú v `config.py` (dá sa editovať priamo na GitHube – iko
 - `MIN_ODDS`, `MAX_ODDS` – rozsah kurzov
 - `AUTO_TUNE_EDGE` / `MIN_EDGE` – automatický alebo pevný prah výhody
 - `KELLY_FRACTION`, `MAX_STAKE_PCT` – veľkosť vkladu
+- `MIN_SERVE_MATCHES` – od koľkých zápasov so štatistikou podania sa použije model na úrovni bodov
 
 **Nenapárovaný hráč** (meno z The Odds API sa nenašlo v historických dátach): doplň riadok do `state/aliases.csv`, napr.
 ```

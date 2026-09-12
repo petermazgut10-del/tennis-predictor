@@ -17,7 +17,7 @@ import numpy as np
 import pandas as pd
 
 import config
-from src import backtest, elo, odds_store, tdata, tml, tracker
+from src import backtest, elo, markov, odds_store, serve, tdata, tml, tracker
 from src.names import FullNameIndex
 from src.odds_api import OddsAPI, QuotaLow
 from src.predict import player_index, predict_events
@@ -46,6 +46,19 @@ def write_json(name: str, obj):
         json.dump(_clean(obj), f, ensure_ascii=False, separators=(",", ":"))
 
 
+def add_markov(feats: pd.DataFrame, srv_feats: pd.DataFrame, hist: pd.DataFrame) -> pd.DataFrame:
+    """Doplní k Elo príznakom očakávané podanie oboch hráčov a z neho šancu podľa modelu bodov."""
+    f = feats.join(srv_feats.loc[feats.index])
+    ok = (f["a_ns"] >= config.MIN_SERVE_MATCHES) & (f["b_ns"] >= config.MIN_SERVE_MATCHES)
+    mk = np.full(len(f), 0.5)
+    if ok.any():
+        mk[ok.values] = markov.match_prob_vec(f.loc[ok, "a_spw"], f.loc[ok, "b_spw"],
+                                              hist.loc[f.index[ok], "best_of"])
+    f["a_mk"] = mk
+    f["b_mk"] = 1 - mk
+    return f
+
+
 def players_from_hist(hist: pd.DataFrame) -> dict:
     w = hist[["w_key", "winner", "date"]].set_axis(["key", "name", "date"], axis=1)
     l = hist[["l_key", "loser", "date"]].set_axis(["key", "name", "date"], axis=1)
@@ -55,19 +68,23 @@ def players_from_hist(hist: pd.DataFrame) -> dict:
     return {k: {"name": r.name, "last": r.last, "n": int(r.n)} for k, r in zip(info.index, info.itertuples())}
 
 
-def ratings_export(book: elo.EloBook, model, last_date: pd.Timestamp) -> dict:
+def ratings_export(book: elo.EloBook, srv: serve.ServeBook, model, last_date: pd.Timestamp) -> dict:
     players = []
     cutoff = last_date - pd.Timedelta(days=548)
     for key, p in book.p.items():
         if p.last is None or p.last < cutoff or p.n < 10:
             continue
+        sp = srv.p.get(key)
         players.append({
             "key": key, "name": p.name, "tour": key.split("|")[0], "elo": round(p.elo, 1),
             "surf": {s: round(v, 1) for s, v in p.surf.items()}, "n": p.n, "sn": p.surf_n,
             "rank": None if math.isnan(p.rank) else int(p.rank), "last": str(p.last.date()),
+            "s": round(sp.s, 4) if sp else 0.0, "r": round(sp.r, 4) if sp else 0.0, "ns": sp.n if sp else 0,
         })
     players.sort(key=lambda x: -x["elo"])
-    return {"model": model.to_json(), "players": players, "data_until": str(last_date.date())}
+    return {"model": model.to_json(), "players": players, "data_until": str(last_date.date()),
+            "serve_base": {f"{t}|{s}": round(v, 4) for (t, s), v in srv.base.items()},
+            "min_serve_matches": config.MIN_SERVE_MATCHES}
 
 
 def main():
@@ -89,8 +106,11 @@ def main():
     n_odds = tdata.attach_odds(hist, tdata.load_all(), FullNameIndex(players_from_hist(hist)))
     print(f"   kurzy z tennis-data.co.uk pripojené k {n_odds} zápasom")
 
-    print("2) Elo ratingy")
+    print("2) Elo ratingy a sila podania")
     feats, book = elo.run(hist)
+    srv_feats, srv = serve.run(hist)
+    feats = add_markov(feats, srv_feats, hist)
+    print(f"   hráči so štatistikou podania: {sum(1 for p in srv.p.values() if p.n >= 5)}")
 
     print("3) Backtest (walk-forward)")
     bt, _ = backtest.run(hist, feats)
@@ -102,7 +122,7 @@ def main():
           f" | test ROI {ch['test']['roi']} ({ch['test']['bets']} stávok) | verdikt: {bt['verdict']}")
 
     model = backtest.fit_latest(hist, feats)
-    write_json("ratings.json", ratings_export(book, model, last_date))
+    write_json("ratings.json", ratings_export(book, srv, model, last_date))
     if args.cmd == "backtest":
         return
 
@@ -123,7 +143,7 @@ def main():
                 except QuotaLow as e:
                     notes.append(str(e))
                     break
-                p, u = predict_events(events, sp, book, model, idx, threshold, now.to_pydatetime())
+                p, u = predict_events(events, sp, book, srv, model, idx, threshold, now.to_pydatetime())
                 preds += p
                 unmatched += u
         except Exception as e:

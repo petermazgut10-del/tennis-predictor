@@ -18,6 +18,8 @@ ELO_K_SHAPE = 0.4
 SKIP_WALKOVERS = True        # skreče (walkover) sa do Elo nerátajú
 RETIRED_WEIGHT = 0.5         # zápas ukončený skrečom počas hry sa ráta polovičnou váhou
 
+MIN_SERVE_MATCHES = 8        # koľko zápasov so štatistikou podania musí mať hráč, aby sa model bodov použil
+
 # --- Kalibračný model (logistická regresia nad Elo) ---
 CALIB_TRAIN_YEARS = 4        # na koľkých predchádzajúcich rokoch sa model učí
 BACKTEST_FIRST_YEAR = 2015   # prvé roky slúžia na "zahriatie" Elo ratingov
