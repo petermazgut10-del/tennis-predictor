@@ -166,6 +166,10 @@ details summary { cursor: pointer; color: var(--ink-2); }
       <div class="card"><h2>Kalibrácia modelu</h2><div class="sub">Keď model povie 70 %, vyhrá hráč naozaj ~70 % zápasov? Body by mali ležať na diagonále.</div><div class="chart" id="ch-calib"></div></div>
       <div class="card"><h2>Presnosť tipov (test)</h2><div class="sub">Nižší log loss a Brier = lepšie. Pinnacle je laťka, ktorú treba prekonať.</div><div class="tbl"><table id="t-acc"></table></div></div>
     </div>
+    <div class="card"><h2>Model na úrovni bodov – kontrola na skutočnom skóre</h2>
+      <div class="sub">Z podania a returnu sa dá odhadnúť aj priebeh zápasu. Tu sa porovnáva, či sedí počet gemov a pomer 2:0 / 2:1 (základ pre budúce hendikepy a over/under).</div>
+      <div id="scores" style="margin-top:10px"></div>
+    </div>
     <div class="card"><h2>Citlivosť na prah výhody (edge)</h2><div class="sub" id="grid-sub"></div><div class="tbl"><table id="t-grid"></table></div></div>
     <div class="grid2">
       <div class="card"><h3>Podľa okruhu (test)</h3><div class="tbl"><table id="t-tour"></table></div></div>
@@ -201,6 +205,7 @@ details summary { cursor: pointer; color: var(--ink-2); }
         <li><b>Elo ratingy</b> – každý hráč má celkový rating a rating pre každý povrch. Po každom zápase sa upravia podľa toho, či výsledok bol prekvapenie.</li>
         <li><b>Kalibrácia</b> – logistická regresia spojí celkové a povrchové Elo, rebríček, skúsenosti a pauzu od posledného zápasu do jednej pravdepodobnosti. Učí sa len na minulých rokoch.</li>
         <li><b>Value</b> – ak model dáva hráčovi pravdepodobnosť <i>p</i> a kurz je <i>k</i>, výhoda je <i>edge = p × k − 1</i>. Tip sa ukáže, keď je edge nad prahom z backtestu.</li>
+        <li><b>Podanie / Return</b> v Elo rebríčku – o koľko percentuálnych bodov vyhráva hráč viac bodov na svojom podaní (resp. na returne súpera) ako priemerný hráč. Z týchto dvoch čísel model počíta priebeh zápasu bod po bode.</li>
         <li><b>CLV (closing line value)</b> – porovnanie kurzu v čase tipu s kurzom tesne pred zápasom. Ak si tipoval kurz 2,20 a pred zápasom je 2,00, trh sa posunul k tvojmu názoru (+10 % CLV). Dlhodobo kladné CLV je najspoľahlivejší znak skutočnej výhody.</li>
         <li><b>Férový kurz</b> = 1 / p. <b>Min. kurz</b> = najnižší kurz, pri ktorom je tip ešte value – porovnaj ho s kurzom vo svojej stávkovej kancelárii.</li>
       </ol>
@@ -375,6 +380,101 @@ function calibChart(host, bins) {
   host.append(svg);
 }
 
+
+/* ---------- model na úrovni bodov (rovnaké vzorce ako src/markov.py) ---------- */
+function gameProb(p) {
+  p = Math.min(Math.max(p, 1e-6), 1 - 1e-6); const q = 1 - p;
+  const deuce = p * p / (p * p + q * q);
+  return p ** 4 + 4 * p ** 4 * q + 10 * p ** 4 * q ** 2 + 20 * p ** 3 * q ** 3 * deuce;
+}
+function tiebreakProb(pa, pb, target = 7) {
+  let probs = new Map([["0,0", 1]]), win = 0;
+  for (let t = 0; t < 200; t++) {
+    const nxt = new Map();
+    for (const [k, pr] of probs) {
+      const [a, b] = k.split(",").map(Number);
+      const p = (((t + 1) >> 1) % 2 === 0) ? pa : 1 - pb;
+      for (const [res, pp] of [[1, p], [0, 1 - p]]) {
+        const key = (a + res) + "," + (b + 1 - res);
+        nxt.set(key, (nxt.get(key) || 0) + pr * pp);
+      }
+    }
+    probs = new Map();
+    for (const [k, pr] of nxt) {
+      const [a, b] = k.split(",").map(Number);
+      if (a >= target && a - b >= 2) win += pr;
+      else if (!(b >= target && b - a >= 2)) probs.set(k, pr);
+    }
+    if (!probs.size) break;
+  }
+  return win;
+}
+function setDist(pa, pb, aFirst) {
+  const ga = gameProb(pa), gb = gameProb(pb), out = new Map();
+  let states = new Map([["0,0", 1]]);
+  for (let i = 0; i < 13 && states.size; i++) {
+    const nxt = new Map();
+    for (const [k, pr] of states) {
+      const [a, b] = k.split(",").map(Number);
+      const aServing = ((a + b) % 2 === 0) === aFirst;
+      const pAg = aServing ? ga : 1 - gb;
+      for (const [res, pp] of [[1, pAg], [0, 1 - pAg]]) {
+        const na = a + res, nb = b + 1 - res, key = na + "," + nb;
+        if ((na >= 6 && na - nb >= 2) || (nb >= 6 && nb - na >= 2)) out.set(key, (out.get(key) || 0) + pr * pp);
+        else if (na === 6 && nb === 6) {
+          const tb = aFirst ? tiebreakProb(pa, pb) : 1 - tiebreakProb(pb, pa);
+          out.set("7,6", (out.get("7,6") || 0) + pr * pp * tb);
+          out.set("6,7", (out.get("6,7") || 0) + pr * pp * (1 - tb));
+        } else nxt.set(key, (nxt.get(key) || 0) + pr * pp);
+      }
+    }
+    states = nxt;
+  }
+  return out;
+}
+function matchDist(pa, pb, bestOf = 3) {
+  const need = (bestOf >> 1) + 1, dFirst = setDist(pa, pb, true), dSecond = setDist(pa, pb, false);
+  let states = [{ sa: 0, sb: 0, aFirst: true, games: new Map([[0, 1]]) }];
+  let p = 0, sets = new Map(), games = new Map();
+  for (let i = 0; i < bestOf; i++) {
+    const acc = new Map();
+    for (const st of states) {
+      for (const [k, ps] of (st.aFirst ? dFirst : dSecond)) {
+        const [ga, gb] = k.split(",").map(Number);
+        const nsa = st.sa + (ga > gb ? 1 : 0), nsb = st.sb + (gb > ga ? 1 : 0);
+        const nf = (ga + gb) % 2 === 0 ? st.aFirst : !st.aFirst;
+        const key = nsa + "," + nsb + "," + nf;
+        const cur = acc.get(key) || new Map();
+        for (const [g, pg] of st.games) cur.set(g + ga + gb, (cur.get(g + ga + gb) || 0) + pg * ps);
+        acc.set(key, cur);
+      }
+    }
+    states = [];
+    for (const [key, gm] of acc) {
+      const [sa, sb, nf] = key.split(",");
+      const total = [...gm.values()].reduce((x, y) => x + y, 0);
+      if (+sa === need || +sb === need) {
+        sets.set(sa + ":" + sb, (sets.get(sa + ":" + sb) || 0) + total);
+        for (const [g, pg] of gm) games.set(g, (games.get(g) || 0) + pg);
+        if (+sa === need) p += total;
+      } else states.push({ sa: +sa, sb: +sb, aFirst: nf === "true", games: gm });
+    }
+  }
+  let exp = 0; for (const [g, pg] of games) exp += g * pg;
+  return { p, sets, games, expGames: exp };
+}
+
+function calibrateServe(pa, pb, target, bo) {
+  let lo = -0.25, hi = 0.25;
+  for (let i = 0; i < 20; i++) {
+    const d = (lo + hi) / 2;
+    const p = matchDist(Math.min(Math.max(pa + d, 0.05), 0.98), Math.min(Math.max(pb - d, 0.05), 0.98), bo).p;
+    if (p < target) lo = d; else hi = d;
+  }
+  const d = (lo + hi) / 2;
+  return [Math.min(Math.max(pa + d, 0.05), 0.98), Math.min(Math.max(pb - d, 0.05), 0.98)];
+}
+
 /* ---------- state ---------- */
 let P = null, B = null, R = null, T = null, H = null;
 
@@ -465,12 +565,29 @@ function renderBT() {
   lineChart($("#ch-curve"), (B.curve || []).map((p) => ({ x: new Date(p.date), y: p.cum })), { yFmt: (v) => sgn(v, 0) + " j.", tipFmt: (p) => [sgn(p.y, 1) + " j.", "týždeň od " + p.x.toLocaleDateString("sk-SK")] });
   yearBars($("#ch-years"), B.per_year, B.tune_last_train_year);
   calibChart($("#ch-calib"), B.calibration);
+  renderScores();
   table($("#t-acc"), ["Metóda", "Presnosť", "Log loss", "Brier"], (B.accuracy_test || []).map((r) => [r.name, pct(r.accuracy), r.log_loss == null ? "–" : num(r.log_loss, 3), r.brier == null ? "–" : num(r.brier, 3)]), [1, 2, 3]);
   $("#grid-sub").textContent = `Prah sa vyberá len podľa tréningových rokov (do ${B.tune_last_train_year}) – test ukazuje, ako by to dopadlo naozaj. Vybraný prah: ${pct(B.chosen_edge, 1)}.`;
   table($("#t-grid"), ["Edge ≥", "Tréning: stávky", "Tréning: ROI", "Test: stávky", "Test: ROI", "Test: zisk"],
     B.grid.map((g) => { const r = [pct(g.edge, 1), num(g.train.bets, 0), spct(g.train.roi), num(g.test.bets, 0), spct(g.test.roi), sgn(g.test.profit, 1)]; if (g.edge === B.chosen_edge) r._class = "value"; return r; }), [1, 2, 3, 4, 5]);
   const seg = (el, rows) => table(el, ["Segment", "Stávky", "ROI", "Úspešnosť"], rows.map((r) => [r.segment, num(r.bets, 0), spct(r.roi), pct(r.hit_rate)]), [1, 2, 3]);
   seg($("#t-tour"), B.by_tour); seg($("#t-surf"), B.by_surface.map((r) => ({ ...r, segment: SURF[r.segment] || r.segment }))); seg($("#t-odds"), B.by_odds);
+}
+
+function renderScores() {
+  const el = $("#scores"); el.replaceChildren();
+  const S = B?.scores;
+  if (!S || !S.n) { el.append(h("div", { class: "empty" }, "Zatiaľ málo zápasov so štatistikou podania.")); return; }
+  const tile = (l, v, d) => h("div", { class: "tile" }, h("div", { class: "l" }, l), h("div", { class: "v" }, v), d ? h("div", { class: "d" }, d) : null);
+  el.append(h("div", { class: "tiles" },
+    tile("Overené zápasy", num(S.n, 0), "so štatistikou podania"),
+    tile("Gemy: model vs realita", `${num(S.pred_games, 1)} / ${num(S.actual_games, 1)}`, `priemerná odchýlka ${num(S.mae_games, 1)} gemu`),
+    tile("Bez straty setu", `${pct(S.pred_straight, 0)} / ${pct(S.actual_straight, 0)}`, "model / realita")));
+  if (S.over_bins?.length) {
+    const t = h("table", {});
+    table(t, ["Model: šanca na viac gemov", "Realita", "Zápasy"], S.over_bins.map((b) => [pct(b.pred), pct(b.actual), num(b.n, 0)]), [0, 1, 2]);
+    el.append(h("div", { class: "tbl" }, t));
+  }
 }
 
 function renderPaper() {
@@ -521,23 +638,34 @@ function renderElo() {
   const val = (p) => sf === "all" ? p.elo : p.surf[sf];
   const list = R.players.filter((p) => p.tour === tour && (sf === "all" || p.sn[sf] >= 10)).sort((a, b) => val(b) - val(a));
   const rows = list.map((p, i) => ({ i: i + 1, p })).filter(({ p }) => !q || p.name.toLowerCase().includes(q)).slice(0, 100)
-    .map(({ i, p }) => [i, p.name, num(val(p), 0), num(p.elo, 0), num(p.surf.Hard, 0), num(p.surf.Clay, 0), num(p.surf.Grass, 0), p.rank ?? "–", num(p.n, 0), new Date(p.last).toLocaleDateString("sk-SK")]);
-  table($("#t-elo"), ["#", "Hráč", "Rating", "Celkový", "Hard", "Antuka", "Tráva", "ATP/WTA rank", "Zápasy", "Posledný zápas"], rows, [0, 2, 3, 4, 5, 6, 7, 8]);
+    .map(({ i, p }) => [i, p.name, num(val(p), 0), num(p.elo, 0), num(p.surf.Hard, 0), num(p.surf.Clay, 0), num(p.surf.Grass, 0),
+      p.ns >= 8 ? sgn((p.s || 0) * 100, 1) : "–", p.ns >= 8 ? sgn((p.r || 0) * 100, 1) : "–",
+      p.rank ?? "–", num(p.n, 0), new Date(p.last).toLocaleDateString("sk-SK")]);
+  table($("#t-elo"), ["#", "Hráč", "Rating", "Celkový", "Hard", "Antuka", "Tráva", "Podanie", "Return", "Rank", "Zápasy", "Posledný zápas"], rows, [0, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
 }
 
 /* ---------- kalkulačka: rovnaký vzorec ako src/model.py ---------- */
+function serveProbs(a, b, tour, surf) {
+  const base = (R.serve_base || {})[`${tour}|${surf}`];
+  if (base == null || Math.min(a.ns || 0, b.ns || 0) < (R.min_serve_matches ?? 8)) return null;
+  const cl = (x) => Math.min(Math.max(x, 0.3), 0.92);
+  return [cl(base + (a.s || 0) - (b.r || 0)), cl(base + (b.s || 0) - (a.r || 0))];
+}
 function calcProb(a, b, surf, bo) {
   const M = R.model, fill = M.rank_fill;
   const days = (p) => Math.min(Math.max((Date.now() - new Date(p.last).getTime()) / 864e5, 0), 365);
   const lr = (r) => Math.log(Math.max(r ?? fill, 1));
+  const sp = serveProbs(a, b, a.tour, surf);
+  const mk = sp ? matchDist(sp[0], sp[1], bo).p : 0.5;
   const x = {
     d_all: (a.elo - b.elo) / 400, d_surf: (a.surf[surf] - b.surf[surf]) / 400, d_rank: lr(b.rank) - lr(a.rank),
     d_exp: Math.log1p(a.n) - Math.log1p(b.n), d_sexp: Math.log1p(a.sn[surf]) - Math.log1p(b.sn[surf]),
     d_days: Math.log1p(days(a)) - Math.log1p(days(b)),
+    d_markov: Math.log(Math.min(Math.max(mk, 0.001), 0.999) / (1 - Math.min(Math.max(mk, 0.001), 0.999))),
   };
   x.d_all_bo5 = bo === 5 ? x.d_all : 0; x.d_surf_bo5 = bo === 5 ? x.d_surf : 0;
-  const z = M.features.reduce((acc, f, i) => acc + M.coef[i] * x[f], 0);
-  return 1 / (1 + Math.exp(-z));
+  const z = M.features.reduce((acc, f, i) => acc + M.coef[i] * (x[f] ?? 0), 0);
+  return { p: 1 / (1 + Math.exp(-z)), sp };
 }
 function findPlayer(tour, name) {
   const n = name.trim().toLowerCase(); if (!n) return null;
@@ -552,7 +680,7 @@ function renderCalc() {
   const a = findPlayer(tour, $("#c-a").value), b = findPlayer(tour, $("#c-b").value);
   if (!a || !b) { out.append(h("div", { class: "empty" }, "Vyber dvoch hráčov zo zoznamu (píš priezvisko).")); return; }
   const surf = $("#c-surf").value, bo = +$("#c-bo").value;
-  const p = calcProb(a, b, surf, bo);
+  const res = calcProb(a, b, surf, bo), p = res.p;
   const oa = parseFloat($("#c-oa").value), ob = parseFloat($("#c-ob").value);
   const thr = P?.threshold ?? B?.chosen_edge ?? 0.05;
   const side = (pl, pp, o) => {
@@ -567,6 +695,20 @@ function renderCalc() {
       e != null && e >= thr ? h("div", { style: "margin-top:8px" }, h("span", { class: "badge good" }, "value")) : null);
   };
   out.append(h("div", { class: "res" }, side(a, p, oa), side(b, 1 - p, ob)));
+  if (res.sp) {
+    const cal = calibrateServe(res.sp[0], res.sp[1], p, bo);
+    const d = matchDist(cal[0], cal[1], bo);
+    const need = (bo >> 1) + 1;
+    let straight = 0; for (const [k, v] of d.sets) { const [x, y] = k.split(":").map(Number); if (x + y === need) straight += v; }
+    const rows = [...d.sets.entries()].sort((x, y) => y[1] - x[1]).map(([k, v]) => `${k.replace(":", ":")} ${pct(v, 0)}`);
+    out.append(h("div", { class: "card", style: "margin-top:12px" },
+      h("h3", {}, "Model na úrovni bodov"),
+      h("div", { class: "kv" },
+        h("span", {}, "Body na podaní"), h("span", {}, `${pct(cal[0], 1)} / ${pct(cal[1], 1)}`),
+        h("span", {}, "Očakávaný počet gemov"), h("span", {}, num(d.expGames, 1)),
+        h("span", {}, "Zápas na 2 sety (bez straty setu)"), h("span", {}, pct(straight)),
+        h("span", {}, "Najpravdepodobnejšie skóre v setoch"), h("span", {}, rows.slice(0, 3).join(" · ")))));
+  }
   if (Math.min(a.n, b.n) < 15) out.append(h("p", { class: "note" }, "Pozor: jeden z hráčov má v histórii málo zápasov, odhad je neistý."));
 }
 
