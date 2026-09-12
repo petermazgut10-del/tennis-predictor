@@ -108,13 +108,34 @@ def generate(out_dir: str, start=2011, end=None, seed=1, bookie_noise=0.25, marg
                             "MaxW": round(oddsw * 1.04, 2), "MaxL": round(oddsl * 1.04, 2),
                             "AvgW": round(oddsw, 2), "AvgL": round(oddsl, 2),
                         })
+                        # skóre a štatistiky podania (spw podľa sily hráča)
+                        need = 2 if best_of == 3 else 3
+                        lsets = int(rng.integers(0, need))
+                        sets_txt = []
+                        for k in range(need + lsets):
+                            if k < need + lsets - 1 and rng.random() < 0.5:
+                                sets_txt.append("7-6(5)" if rng.random() < 0.3 else f"6-{rng.integers(0, 5)}")
+                            else:
+                                sets_txt.append(f"6-{rng.integers(0, 5)}")
+                        score_txt = " ".join(sets_txt)
+                        sv = {}
+                        for who, pl, opp in (("w", w, l), ("l", l, w)):
+                            base = 0.63 + 0.05 * (pl["skill"] - opp["skill"]) + rng.normal(0, 0.03)
+                            svpt = int(rng.integers(55, 95))
+                            won = int(round(min(max(base, 0.35), 0.9) * svpt))
+                            sv[f"{who}_svpt"] = svpt
+                            sv[f"{who}_1stIn"] = int(svpt * 0.62)
+                            sv[f"{who}_1stWon"] = int(won * 0.72)
+                            sv[f"{who}_2ndWon"] = won - int(won * 0.72)
                         tml_rows.append({
                             "tourney_id": f"{year}-{ti}", "tourney_name": loc, "surface": surf, "draw_size": size,
                             "tourney_level": "G" if gs else "M", "indoor": "O", "tourney_date": day.strftime("%Y%m%d"),
                             "match_num": len(tml_rows) + 1, "winner_id": w["id"], "winner_name": w["full"],
                             "winner_rank": rank[w["full"]], "loser_id": l["id"], "loser_name": l["full"],
                             "loser_rank": rank[l["full"]],
-                            "score": {"Completed": "6-4 6-4", "Retired": "6-4 2-1 RET", "Walkover": "W/O"}[comment],
+                            "score": {"Completed": score_txt, "Retired": score_txt.split()[0] + " 2-1 RET",
+                                      "Walkover": "W/O"}[comment],
+                            **sv,
                             "best_of": best_of, "round": ["R128", "R64", "R32", "R16", "QF", "SF", "F"][-int(np.log2(size)):][ri],
                         })
                         rows[-1]["Date"] = day + dt.timedelta(days=ri * (2 if gs else 1))

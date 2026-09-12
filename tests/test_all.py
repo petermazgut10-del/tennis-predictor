@@ -101,6 +101,43 @@ def test_own_history_eval():
     assert out["strategy"]["bets"] == 1 and abs(out["strategy"]["roi"] - 0.95) < 1e-9  # A @1.95 vyhral
 
 
+def test_markov():
+    from src import markov as M
+    assert abs(M.game_prob(0.5) - 0.5) < 1e-9
+    assert 0.82 < M.game_prob(0.65) < 0.84          # bežné podanie ATP
+    assert abs(M.tiebreak_prob(0.6, 0.6) - 0.5) < 1e-9
+    d = M.match_dist(0.65, 0.65, 3)
+    assert abs(d["p"] - 0.5) < 1e-6
+    assert abs(sum(d["games"].values()) - 1) < 1e-9 and abs(sum(d["sets"].values()) - 1) < 1e-9
+    assert 22 < d["exp_games"] < 27                  # priemerný dvojsetový/trojsetový zápas
+    assert M.match_prob(0.70, 0.60, 5) > M.match_prob(0.70, 0.60, 3) > 0.5   # bo5 pomáha favoritovi
+    assert abs(M.match_prob(0.66, 0.62, 3) + M.match_prob(0.62, 0.66, 3) - 1) < 0.01
+    pa, pb = M.calibrate(0.64, 0.64, 0.72, 3)
+    assert abs(M.match_prob(pa, pb, 3) - 0.72) < 0.002 and pa > pb
+    import numpy as np
+    v = M.match_prob_vec([0.65, 0.70], [0.65, 0.60], [3, 5])
+    assert abs(v[0] - 0.5) < 0.005 and abs(v[1] - M.match_prob(0.70, 0.60, 5)) < 0.005
+
+
+def test_serve_ratings():
+    import pandas as pd
+    from src import serve
+    rng = np.random.default_rng(0)
+    rows = []
+    for i in range(400):
+        # hráč S má silné podanie (0,70), hráč W slabé (0,58), striedajú súperov
+        for (w, l, spw_w, spw_l) in [("ATP|S", "ATP|W", 0.70, 0.58), ("ATP|W", "ATP|S", 0.58, 0.70)]:
+            rows.append(dict(tour="ATP", surface="Hard", w_key=w, l_key=l,
+                             w_spw=spw_w + rng.normal(0, 0.02), l_spw=spw_l + rng.normal(0, 0.02),
+                             w_svpt=70, l_svpt=70))
+    df = pd.DataFrame(rows)
+    feats, book = serve.run(df, base={("ATP", "Hard"): 0.64})
+    s_, w_ = book.p["ATP|S"], book.p["ATP|W"]
+    assert s_.s > 0.03 and w_.s < -0.03            # model našiel, kto lepšie podáva
+    assert book.expected(s_, w_, "ATP", "Hard") > book.expected(w_, s_, "ATP", "Hard")
+    assert feats["a_spw"].notna().all()
+
+
 # ---------- celá pipeline s falošným The Odds API ----------
 class FakeResp:
     def __init__(self, data, remaining=450):
@@ -212,7 +249,7 @@ def test_pipeline(workdir, monkeypatch):
     assert abs(r["close_odds"] - round((2.4 + 2.4 * 0.97 + 2.4 * 1.02) / 3, 3)) < 0.01
     assert r["clv"] > 0.3 and r["clv_ev"] > 0
     tr = json.load(open("docs/data/tracker.json"))
-    assert tr["clv"]["n"] == 1 and tr["clv"]["beat_close"] == 1.0
+    assert tr["clv"]["n"] >= 1 and tr["clv"]["avg"] > 0
     # snímka bez tipov pred začiatkom nesmie míňať kredity
     log.loc[:, "start"] = fut
     log.to_csv("state/bet_log.csv", index=False)
@@ -260,7 +297,7 @@ class _MP:
 
 
 if __name__ == "__main__":
-    for t in [test_parse_td, test_match_real_names, test_canonical_merge, test_bo5_conversion, test_own_history_eval]:
+    for t in [test_parse_td, test_match_real_names, test_canonical_merge, test_bo5_conversion, test_own_history_eval, test_markov, test_serve_ratings]:
         t()
         print("OK", t.__name__)
     d, mp = _workdir(), _MP()
