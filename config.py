@@ -32,10 +32,14 @@ MIN_ODDS = 1.30
 MAX_ODDS = 5.00
 # Minimálna výhoda (edge = p_model * kurz - 1). Ak AUTO_TUNE_EDGE=True, prah sa vyberie
 # v backteste len na "tréningových" rokoch a overí sa na neskorších rokoch (out-of-sample).
-MIN_EDGE = 0.05
+MIN_EDGE = 0.07
 AUTO_TUNE_EDGE = True
-EDGE_GRID = [0.02, 0.03, 0.05, 0.075, 0.10, 0.15, 0.20]
-TUNE_LAST_TRAIN_YEAR = 2020  # ladenie prahu na rokoch <= 2020, test na rokoch po ňom
+EDGE_GRID = [0.03, 0.05, 0.07, 0.10, 0.15]
+TUNE_LAST_TRAIN_YEAR = 2020  # ladenie prahu na rokoch <= 2020 (ak sú kurzy len staršie, posunie sa automaticky)
+# Poistky proti "príliš dobrým" tipom: keď sa model s trhom rozchádza o veľa, spravidla
+# trh vie niečo, čo model nevidí (zranenie, forma). Také zápasy sa netipujú.
+MAX_EDGE = 0.25                 # edge nad týmto je podozrivý, nie výhodný
+MAX_MARKET_DISAGREEMENT = 0.08  # max. rozdiel pravdepodobnosti modelu a férovej pravdepodobnosti trhu
 KELLY_FRACTION = 0.25        # zlomkové Kelly pre návrh veľkosti stávky
 MAX_STAKE_PCT = 0.02         # max 2 % bankrollu na jednu stávku
 

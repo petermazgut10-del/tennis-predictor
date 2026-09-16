@@ -12,6 +12,8 @@ Beží zadarmo na GitHube: každé ráno sa sám aktualizuje a výsledky ukáže
    Model sa vždy učí len na minulosti.
 5. **Backtest**: overí, ako by model dopadol v rokoch 2015–dnes, a porovná ho s Pinnacle (najostrejšou kanceláriou).
    Prah výhody sa ladí len na rokoch do 2020, roky 2021+ sú poctivý test.
+   Historické kurzy: keď je tennis-data.co.uk nedostupné, použije sa verejné zrkadlo tých istých dát
+   na GitHube (repozitár 0xsimulacra/MLT, ATP 2001–2019, WTA 2007–2019).
 6. Stiahne kurzy na nadchádzajúce zápasy z [The Odds API](https://the-odds-api.com) (zadarmo 500 kreditov / mesiac)
    a označí zápasy, kde je kurz vyšší ako férový kurz modelu.
 7. Každý value tip zapíše ako **papierovú stávku** a po zápase ju vyhodnotí – to je skutočný test bez peňazí.
@@ -80,6 +82,8 @@ Všetky nastavenia sú v `config.py` (dá sa editovať priamo na GitHube – iko
 - `VALUE_ODDS_BASIS` – na akom kurze sa meria value: `"avg"` (priemer, realistické), `"max"` (najlepší kurz), `"pinnacle"`
 - `MIN_ODDS`, `MAX_ODDS` – rozsah kurzov
 - `AUTO_TUNE_EDGE` / `MIN_EDGE` – automatický alebo pevný prah výhody
+- `MAX_EDGE` – edge nad touto hranicou je podozrivý (model sa mýli častejšie než trh) a tip sa nevytvorí
+- `MAX_MARKET_DISAGREEMENT` – max. rozdiel medzi pravdepodobnosťou modelu a férovou pravdepodobnosťou trhu
 - `KELLY_FRACTION`, `MAX_STAKE_PCT` – veľkosť vkladu
 - `MIN_SERVE_MATCHES` – od koľkých zápasov so štatistikou podania sa použije model na úrovni bodov
 

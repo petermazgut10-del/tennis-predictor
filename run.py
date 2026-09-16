@@ -17,7 +17,7 @@ import numpy as np
 import pandas as pd
 
 import config
-from src import backtest, elo, markov, odds_store, serve, tdata, tml, tracker
+from src import backtest, elo, markov, odds_hist, odds_store, serve, tdata, tml, tracker
 from src.names import FullNameIndex
 from src.odds_api import OddsAPI, QuotaLow
 from src.predict import player_index, predict_events
@@ -100,11 +100,14 @@ def main():
     if not args.offline:
         tml.download()
         tdata.download()
+        odds_hist.download()
     hist = tml.load_all()
     last_date = hist["date"].max()
     print(f"   {len(hist)} zápasov (TennisMyLife), posledný {last_date.date()}")
-    n_odds = tdata.attach_odds(hist, tdata.load_all(), FullNameIndex(players_from_hist(hist)))
-    print(f"   kurzy z tennis-data.co.uk pripojené k {n_odds} zápasom")
+    odds = odds_hist.combine(tdata.load_all(), odds_hist.load_all())
+    n_odds = tdata.attach_odds(hist, odds, FullNameIndex(players_from_hist(hist)))
+    years = f"{odds['date'].dt.year.min()}–{odds['date'].dt.year.max()}" if odds is not None and len(odds) else "–"
+    print(f"   historické kurzy pripojené k {n_odds} zápasom (roky {years})")
 
     print("2) Elo ratingy a sila podania")
     feats, book = elo.run(hist)
