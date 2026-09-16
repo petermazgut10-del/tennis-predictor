@@ -182,6 +182,7 @@ details summary { cursor: pointer; color: var(--ink-2); }
     <p class="note" style="margin-top:0">Každý value tip sa automaticky zapíše s kurzom v čase tipu a po zápase sa vyhodnotí. Vklad = 1 jednotka. Toto je jediný test, pri ktorom model nemôže „vidieť budúcnosť“ – rozhoduj sa podľa neho, nie podľa backtestu.</p>
     <div id="pp-tiles" class="tiles"></div>
     <h2 style="margin-top:4px">Záverečný kurz (CLV)</h2>
+    <p class="note" style="margin-top:-6px" id="rules-note"></p>
     <p class="note" style="margin-top:-6px">Porovnanie kurzu v čase tipu s kurzom tesne pred zápasom. Keď kurz po tipe klesá, trh sa posúva k názoru modelu – najrýchlejší signál, či model má výhodu (stačí 30–50 tipov).</p>
     <div id="clv-tiles" class="tiles"></div>
     <div class="card"><h2>Kumulatívny zisk papierových stávok</h2><div class="chart" id="ch-paper"></div></div>
@@ -205,6 +206,7 @@ details summary { cursor: pointer; color: var(--ink-2); }
         <li><b>Elo ratingy</b> – každý hráč má celkový rating a rating pre každý povrch. Po každom zápase sa upravia podľa toho, či výsledok bol prekvapenie.</li>
         <li><b>Kalibrácia</b> – logistická regresia spojí celkové a povrchové Elo, rebríček, skúsenosti a pauzu od posledného zápasu do jednej pravdepodobnosti. Učí sa len na minulých rokoch.</li>
         <li><b>Value</b> – ak model dáva hráčovi pravdepodobnosť <i>p</i> a kurz je <i>k</i>, výhoda je <i>edge = p × k − 1</i>. Tip sa ukáže, keď je edge nad prahom z backtestu.</li>
+        <li><b>Prečo nie je tip</b> – keď sa model od trhu líši o viac ako 8 percentuálnych bodov, tip sa nevytvorí. Veľká nezhoda s Pinnacle spravidla znamená, že trh vie niečo, čo model nevidí (zranenie, forma, odhlásenie), nie že sme našli výhodu.</li>
         <li><b>Podanie / Return</b> v Elo rebríčku – o koľko percentuálnych bodov vyhráva hráč viac bodov na svojom podaní (resp. na returne súpera) ako priemerný hráč. Z týchto dvoch čísel model počíta priebeh zápasu bod po bode.</li>
         <li><b>CLV (closing line value)</b> – porovnanie kurzu v čase tipu s kurzom tesne pred zápasom. Ak si tipoval kurz 2,20 a pred zápasom je 2,00, trh sa posunul k tvojmu názoru (+10 % CLV). Dlhodobo kladné CLV je najspoľahlivejší znak skutočnej výhody.</li>
         <li><b>Férový kurz</b> = 1 / p. <b>Min. kurz</b> = najnižší kurz, pri ktorom je tip ešte value – porovnaj ho s kurzom vo svojej stávkovej kancelárii.</li>
@@ -537,15 +539,18 @@ function renderTips() {
       h("div", {}, oa ? num(oa.avg) : "–", h("div", {}, ob ? num(ob.avg) : "–")),
       h("div", {}, oa ? `${num(oa.best)} ` : "–", h("div", {}, ob ? `${num(ob.best)}` : "–")),
       h("div", {}, edgeCell(oa), h("div", {}, edgeCell(ob))),
+      h("div", { class: "muted" }, m.value ? "" : (m.skip_reasons || []).join(", ")),
     ];
     if (m.value) r._class = "value";
     return r;
   });
   if (!rows.length) { $("#t-matches").replaceChildren(h("tbody", {}, h("tr", {}, h("td", { class: "empty" }, "Žiadne zápasy.")))); }
-  else table($("#t-matches"), ["Začiatok", "Zápas", "Model", "Pinnacle (trh)", "Priem. kurz", "Najlepší kurz", "Edge"], rows, [3, 4, 5, 6]);
+  else table($("#t-matches"), ["Začiatok", "Zápas", "Model", "Pinnacle (trh)", "Priem. kurz", "Najlepší kurz", "Edge", "Prečo nie je tip"], rows, [3, 4, 5, 6]);
   const notes = $("#notes"); notes.replaceChildren();
   if (P?.unmatched?.length) notes.append(h("details", {}, h("summary", {}, `Nenapárovaní hráči (${P.unmatched.length}) – dá sa doplniť v state/aliases.csv`), h("div", { class: "muted" }, P.unmatched.join(", "))));
   for (const n of P?.notes || []) notes.append(h("div", { class: "muted" }, n));
+  const rn = $("#rules-note");
+  if (rn && B?.rules) rn.textContent = `Tip vznikne len ak: výhoda ${pct(P?.threshold ?? 0.07, 0)}–${pct(B.rules.max_edge, 0)}, model sa od trhu líši najviac o ${pct(B.rules.max_disagreement, 0)} a kurz je v rozsahu ${num(B.rules.min_odds)}–${num(B.rules.max_odds)}.`;
   $("#tips-meta").textContent = P ? `Prah edge ${pct(P.threshold, 1)} · kurzy ${num(P.min_odds)}–${num(P.max_odds)} · zostáva ${P.quota_remaining ?? "?"} kreditov API` : "";
 }
 
