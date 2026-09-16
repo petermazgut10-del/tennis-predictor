@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 
 import config
-from src import markov
+from src import blend, markov
 from src.elo import EloBook
 from src.model import Calibrated, features
 from src.serve import ServeBook
@@ -54,9 +54,17 @@ def parse_odds(event: dict, home: str, away: str) -> dict:
             "pinnacle": pinnacle.get(side),
             "n_books": len(lst),
         }
+    # férová pravdepodobnosť trhu: Pinnacle bez marže; inak medián kancelárií (medián
+    # zámerne ignoruje najlepší kurz, na ktorý sa stavia - inak by sa edge meral sám proti sebe)
     if pinnacle:
         i1, i2 = 1 / pinnacle[home], 1 / pinnacle[away]
-        out["pin_fair_home"] = i1 / (i1 + i2)
+        out["fair_home"] = i1 / (i1 + i2)
+        out["fair_src"] = "Pinnacle"
+    elif len(prices[home]) >= 3:
+        m1 = float(np.median([x[0] for x in prices[home]]))
+        m2 = float(np.median([x[0] for x in prices[away]]))
+        out["fair_home"] = (1 / m1) / (1 / m1 + 1 / m2)
+        out["fair_src"] = f"medián {len(prices[home])} kancelárií"
     return out
 
 
@@ -76,7 +84,8 @@ def kelly_pct(p: float, o: float) -> float:
 
 
 def predict_events(events: list[dict], sport: dict, book: EloBook, srv: ServeBook, model: Calibrated,
-                   idx: FullNameIndex, threshold: float, now: dt.datetime) -> tuple[list[dict], list[str]]:
+                   idx: FullNameIndex, threshold: float, now: dt.datetime,
+                   w_blend: tuple[float, float] = blend.DEFAULT) -> tuple[list[dict], list[str]]:
     key = sport["key"]
     tour = tour_for(key)
     surface = surface_for(key, sport.get("title", ""))
@@ -120,26 +129,33 @@ def predict_events(events: list[dict], sport: dict, book: EloBook, srv: ServeBoo
                        None if np.isnan(snap["b_rank"]) else int(snap["b_rank"])]
         row["value"] = None
         if odds:
+            # === jadro stratégie v2: základ je TRH, model ho len jemne opraví ===
+            fair_home = odds.get("fair_home")
+            if fair_home is None:
+                ia, ib = 1 / odds[home]["avg"], 1 / odds[away]["avg"]
+                fair_home = ia / (ia + ib)
+                odds["fair_src"] = "priemer kancelárií"
+            row["market_p"] = [fair_home, 1 - fair_home]
+            pf = float(blend.apply(w_blend, np.array([p]), np.array([fair_home]))[0])
+            row["p_final"] = [pf, 1 - pf]
+            row["blend"] = {"w_market": w_blend[0], "w_model": w_blend[1], "src": odds.get("fair_src")}
             edges = []
             for i, side in enumerate((home, away)):
                 o = basis_odds(odds[side])
-                edges.append(row["p"][i] * o - 1)
+                edges.append(row["p_final"][i] * o - 1)
                 odds[side]["edge"] = edges[-1]
-                odds[side]["edge_best"] = row["p"][i] * odds[side]["best"] - 1
+                odds[side]["edge_best"] = row["p_final"][i] * odds[side]["best"] - 1
             i = int(np.argmax(edges))
             side = (home, away)[i]
             o_basis = basis_odds(odds[side])
             reliable = min(row["n"]) >= MIN_MATCHES_FOR_VALUE
             row["reliable"] = reliable
-            # férová pravdepodobnosť trhu (bez marže): Pinnacle, inak priemer kancelárií
-            fair_home = odds.get("pin_fair_home")
-            if fair_home is None:
-                ia, ib = 1 / odds[home]["avg"], 1 / odds[away]["avg"]
-                fair_home = ia / (ia + ib)
             p_market = fair_home if i == 0 else 1 - fair_home
-            disagree = abs(row["p"][i] - p_market)
-            row["market_p"] = [fair_home, 1 - fair_home]
+            p_pick = row["p_final"][i]
+            disagree = abs(p_pick - p_market)
             reasons = []
+            if odds[side]["n_books"] < 3:
+                reasons.append("málo kancelárií na porovnanie")
             if edges[i] < threshold:
                 reasons.append("malá výhoda")
             if edges[i] > config.MAX_EDGE:
@@ -155,10 +171,11 @@ def predict_events(events: list[dict], sport: dict, book: EloBook, srv: ServeBoo
             row["skip_reasons"] = reasons
             if not reasons:
                 row["value"] = {
-                    "side": i, "player": side, "p": row["p"][i], "odds": o_basis,
+                    "side": i, "player": side, "p": p_pick, "p_model": row["p"][i], "p_market": p_market,
+                    "odds": o_basis,
                     "best_odds": odds[side]["best"], "best_book": odds[side]["best_book"],
-                    "edge": edges[i], "kelly_pct": kelly_pct(row["p"][i], odds[side]["best"]),
-                    "min_odds": (1 + threshold) / row["p"][i], "disagree": disagree,
+                    "edge": edges[i], "kelly_pct": kelly_pct(p_pick, odds[side]["best"]),
+                    "min_odds": (1 + threshold) / p_pick, "disagree": disagree,
                 }
         out.append(row)
     return out, unmatched

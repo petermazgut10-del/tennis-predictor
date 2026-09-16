@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 
 import config
-from src import markov
+from src import blend, markov
 from src.model import FEATURES, Calibrated, elo_prob, features, oriented
 
 EPS = 1e-9
@@ -56,6 +56,8 @@ def accuracy_table(d: pd.DataFrame) -> list[dict]:
     """Presnosť na zápasoch s kurzami Pinnacle (férové porovnanie s trhom); bez kurzov na všetkých zápasoch."""
     t = d.dropna(subset=["p_model_w", "odds_w_pinnacle", "odds_l_pinnacle"]).copy()
     methods = [("Model (Elo + podanie)", "p_model_w"), ("Model bez podania", "p_noserve_w"), ("Čisté Elo", "p_elo_w")]
+    if "p_blend_w" in t.columns and t["p_blend_w"].notna().any():
+        methods.insert(0, ("Zmes trh + model", "p_blend_w"))
     if len(t) >= 200:
         t["p_pin_w"] = no_vig(t["odds_w_pinnacle"], t["odds_l_pinnacle"])
         methods.append(("Pinnacle (trh)", "p_pin_w"))
@@ -137,13 +139,13 @@ def market_fair_w(d: pd.DataFrame) -> pd.Series:
     return fair.fillna(alt)
 
 
-def bet_candidates(d: pd.DataFrame, basis: str) -> pd.DataFrame:
+def bet_candidates(d: pd.DataFrame, basis: str, pcol: str = "p_model_w") -> pd.DataFrame:
     """Pre každý zápas vyberie stranu s vyššou výhodou (edge) a odfiltruje podozrivé tipy."""
     ow, ol = d[f"odds_w_{basis}"], d[f"odds_l_{basis}"]
-    ok = d["p_model_w"].notna() & ow.notna() & ol.notna()
+    ok = d[pcol].notna() & ow.notna() & ol.notna()
     ok &= ~d["comment"].str.lower().str.contains("retired|walkover|w/o|disq|award", regex=True)
     t = d[ok].copy()
-    pw = t["p_model_w"]
+    pw = t[pcol]
     edge_w = pw * t[f"odds_w_{basis}"] - 1
     edge_l = (1 - pw) * t[f"odds_l_{basis}"] - 1
     pick_w = edge_w >= edge_l
@@ -194,28 +196,49 @@ def run(df: pd.DataFrame, feats: pd.DataFrame) -> tuple[dict, pd.DataFrame]:
     for c in ("score_ok", "games_w", "games_l", "sets_w", "sets_l"):
         if c in df.columns:
             d[c] = df.loc[d.index, c]
-    tested = d[d["p_model_w"].notna()]
+    tested = d[d["p_model_w"].notna()].copy()
     basis = config.VALUE_ODDS_BASIS
-    cands = bet_candidates(tested, basis)
-    # ak máme kurzy len pre staršie roky, hranicu tréning/test posunieme do dát (60 % / 40 %)
+    tested["p_mkt_w"] = market_fair_w(tested)
+
+    # hranica tréning/test: ak máme kurzy len pre staršie roky, posunie sa do dát (60 % / 40 %)
+    with_odds = tested[tested["p_mkt_w"].notna() & tested[f"odds_w_{basis}"].notna()]
     tune_last = config.TUNE_LAST_TRAIN_YEAR
-    if len(cands) and tune_last >= cands["year"].max():
-        tune_last = int(np.quantile(cands["year"], 0.6))
-    train_c = cands[cands["year"] <= tune_last]
-    test_c = cands[cands["year"] > tune_last]
+    if len(with_odds) and tune_last >= with_odds["year"].max():
+        tune_last = int(np.quantile(with_odds["year"], 0.6))
 
-    grid = []
-    for thr in config.EDGE_GRID:
-        grid.append({"edge": thr, "train": summarize(select(train_c, thr)), "test": summarize(select(test_c, thr))})
+    # váhy zmesi (trh + korekcia modelu) sa učia LEN na tréningových rokoch
+    tr_mask = with_odds["year"] <= tune_last
+    w_blend = blend.fit(with_odds.loc[tr_mask, "p_model_w"], with_odds.loc[tr_mask, "p_mkt_w"])
+    tested["p_blend_w"] = blend.apply(w_blend, tested["p_model_w"], tested["p_mkt_w"])
 
-    if config.AUTO_TUNE_EDGE and len(train_c) >= 200:
-        eligible = [g for g in grid if g["train"]["bets"] >= 200]
-        best = max(eligible or grid, key=lambda g: g["train"]["roi"] if g["train"]["roi"] is not None else -9)
-        thr = best["edge"]
-    else:
-        thr = config.MIN_EDGE
+    def tune(pcol):
+        c = bet_candidates(tested, basis, pcol)
+        tr, te = c[c["year"] <= tune_last], c[c["year"] > tune_last]
+        g = [{"edge": t, "train": summarize(select(tr, t)), "test": summarize(select(te, t))}
+             for t in config.EDGE_GRID]
+        if config.AUTO_TUNE_EDGE and len(tr) >= 200:
+            eligible = [x for x in g if x["train"]["bets"] >= 200]
+            best = max(eligible or g, key=lambda x: x["train"]["roi"] if x["train"]["roi"] is not None else -9)
+            t = best["edge"]
+        else:
+            t = config.MIN_EDGE
+        return c, g, t
+
+    primary = "p_blend_w" if config.MARKET_ANCHORED else "p_model_w"
+    strategies = []
+    for name, pcol, popis in (("Zmes trh + model", "p_blend_w", "férová p. trhu jemne opravená modelom"),
+                              ("Len trh (line shopping)", "p_mkt_w", "stávka, keď je najlepší kurz nad férovým kurzom trhu"),
+                              ("Čistý model", "p_model_w", "pôvodná stratégia v1")):
+        c_s, g_s, t_s = tune(pcol)
+        strategies.append({"name": name, "key": pcol, "popis": popis, "edge": t_s,
+                           "train": next(x for x in g_s if x["edge"] == t_s)["train"],
+                           "test": next(x for x in g_s if x["edge"] == t_s)["test"],
+                           "primary": pcol == primary})
+        if pcol == primary:
+            cands, grid, thr = c_s, g_s, t_s
     chosen = next(g for g in grid if g["edge"] == thr)
 
+    test_c = cands[cands["year"] > tune_last]
     test_bets = select(test_c, thr)
     all_bets = select(cands, thr)
     per_year = []
@@ -253,6 +276,10 @@ def run(df: pd.DataFrame, feats: pd.DataFrame) -> tuple[dict, pd.DataFrame]:
     result = {
         "basis": basis,
         "chosen_edge": thr,
+        "strategy": primary,
+        "strategies": strategies,
+        "blend": {"w_market": round(w_blend[0], 4), "w_model": round(w_blend[1], 4),
+                  "popis": blend.describe(w_blend)},
         "tune_last_train_year": tune_last,
         "rules": {"max_edge": config.MAX_EDGE, "max_disagreement": config.MAX_MARKET_DISAGREEMENT,
                   "min_odds": config.MIN_ODDS, "max_odds": config.MAX_ODDS},
@@ -265,6 +292,7 @@ def run(df: pd.DataFrame, feats: pd.DataFrame) -> tuple[dict, pd.DataFrame]:
         "by_odds": seg(test_bets, "odds_bucket"),
         "accuracy_all": accuracy_table(tested),
         "accuracy_test": accuracy_table(tested[tested["year"] > tune_last]),
+        "matches_with_market": int(len(with_odds)),
         "calibration": calibration_bins(tested),
         "scores": validate_scores(d, feats),
         "curve": [{"date": str(r.date.date()), "cum": round(float(r.cum), 2)} for r in curve.itertuples()],
