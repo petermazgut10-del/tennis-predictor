@@ -130,8 +130,15 @@ def validate_scores(d: pd.DataFrame, feats: pd.DataFrame, sample: int = 6000, se
     }
 
 
+def market_fair_w(d: pd.DataFrame) -> pd.Series:
+    """Férová pravdepodobnosť víťaza podľa trhu (bez marže): Pinnacle, inak priemerné kurzy."""
+    fair = no_vig(d["odds_w_pinnacle"], d["odds_l_pinnacle"])
+    alt = no_vig(d["odds_w_avg"], d["odds_l_avg"])
+    return fair.fillna(alt)
+
+
 def bet_candidates(d: pd.DataFrame, basis: str) -> pd.DataFrame:
-    """Pre každý zápas vyberie stranu s vyššou výhodou (edge) na danom type kurzu."""
+    """Pre každý zápas vyberie stranu s vyššou výhodou (edge) a odfiltruje podozrivé tipy."""
     ow, ol = d[f"odds_w_{basis}"], d[f"odds_l_{basis}"]
     ok = d["p_model_w"].notna() & ow.notna() & ol.notna()
     ok &= ~d["comment"].str.lower().str.contains("retired|walkover|w/o|disq|award", regex=True)
@@ -145,7 +152,11 @@ def bet_candidates(d: pd.DataFrame, basis: str) -> pd.DataFrame:
     t["p"] = np.where(pick_w, pw, 1 - pw)
     t["won"] = pick_w.astype(int)
     t["profit"] = np.where(pick_w, t["odds"] - 1, -1.0)
-    return t
+    fair_w = market_fair_w(t)
+    t["p_market"] = np.where(pick_w, fair_w, 1 - fair_w)
+    t["disagree"] = (t["p"] - t["p_market"]).abs()
+    keep = (t["edge"] <= config.MAX_EDGE) & (t["disagree"].isna() | (t["disagree"] <= config.MAX_MARKET_DISAGREEMENT))
+    return t[keep]
 
 
 def select(c: pd.DataFrame, thr: float) -> pd.DataFrame:
@@ -186,8 +197,12 @@ def run(df: pd.DataFrame, feats: pd.DataFrame) -> tuple[dict, pd.DataFrame]:
     tested = d[d["p_model_w"].notna()]
     basis = config.VALUE_ODDS_BASIS
     cands = bet_candidates(tested, basis)
-    train_c = cands[cands["year"] <= config.TUNE_LAST_TRAIN_YEAR]
-    test_c = cands[cands["year"] > config.TUNE_LAST_TRAIN_YEAR]
+    # ak máme kurzy len pre staršie roky, hranicu tréning/test posunieme do dát (60 % / 40 %)
+    tune_last = config.TUNE_LAST_TRAIN_YEAR
+    if len(cands) and tune_last >= cands["year"].max():
+        tune_last = int(np.quantile(cands["year"], 0.6))
+    train_c = cands[cands["year"] <= tune_last]
+    test_c = cands[cands["year"] > tune_last]
 
     grid = []
     for thr in config.EDGE_GRID:
@@ -207,7 +222,7 @@ def run(df: pd.DataFrame, feats: pd.DataFrame) -> tuple[dict, pd.DataFrame]:
     for y, g in all_bets.groupby("year"):
         s = summarize(g)
         s["year"] = int(y)
-        s["out_of_sample"] = bool(y > config.TUNE_LAST_TRAIN_YEAR)
+        s["out_of_sample"] = bool(y > tune_last)
         per_year.append(s)
 
     def seg(frame, by):
@@ -238,7 +253,9 @@ def run(df: pd.DataFrame, feats: pd.DataFrame) -> tuple[dict, pd.DataFrame]:
     result = {
         "basis": basis,
         "chosen_edge": thr,
-        "tune_last_train_year": config.TUNE_LAST_TRAIN_YEAR,
+        "tune_last_train_year": tune_last,
+        "rules": {"max_edge": config.MAX_EDGE, "max_disagreement": config.MAX_MARKET_DISAGREEMENT,
+                  "min_odds": config.MIN_ODDS, "max_odds": config.MAX_ODDS},
         "verdict": verdict,
         "chosen": chosen,
         "grid": grid,
@@ -247,7 +264,7 @@ def run(df: pd.DataFrame, feats: pd.DataFrame) -> tuple[dict, pd.DataFrame]:
         "by_surface": seg(test_bets, "surface"),
         "by_odds": seg(test_bets, "odds_bucket"),
         "accuracy_all": accuracy_table(tested),
-        "accuracy_test": accuracy_table(tested[tested["year"] > config.TUNE_LAST_TRAIN_YEAR]),
+        "accuracy_test": accuracy_table(tested[tested["year"] > tune_last]),
         "calibration": calibration_bins(tested),
         "scores": validate_scores(d, feats),
         "curve": [{"date": str(r.date.date()), "cum": round(float(r.cum), 2)} for r in curve.itertuples()],

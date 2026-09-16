@@ -131,13 +131,34 @@ def predict_events(events: list[dict], sport: dict, book: EloBook, srv: ServeBoo
             o_basis = basis_odds(odds[side])
             reliable = min(row["n"]) >= MIN_MATCHES_FOR_VALUE
             row["reliable"] = reliable
-            if (edges[i] >= threshold and config.MIN_ODDS <= o_basis <= config.MAX_ODDS
-                    and reliable and not row["started"]):
+            # férová pravdepodobnosť trhu (bez marže): Pinnacle, inak priemer kancelárií
+            fair_home = odds.get("pin_fair_home")
+            if fair_home is None:
+                ia, ib = 1 / odds[home]["avg"], 1 / odds[away]["avg"]
+                fair_home = ia / (ia + ib)
+            p_market = fair_home if i == 0 else 1 - fair_home
+            disagree = abs(row["p"][i] - p_market)
+            row["market_p"] = [fair_home, 1 - fair_home]
+            reasons = []
+            if edges[i] < threshold:
+                reasons.append("malá výhoda")
+            if edges[i] > config.MAX_EDGE:
+                reasons.append("príliš veľká nezhoda s trhom")
+            if disagree > config.MAX_MARKET_DISAGREEMENT:
+                reasons.append(f"model sa líši od trhu o {disagree * 100:.0f} p. b.")
+            if not (config.MIN_ODDS <= o_basis <= config.MAX_ODDS):
+                reasons.append("kurz mimo rozsahu")
+            if not reliable:
+                reasons.append("málo zápasov v histórii")
+            if row["started"]:
+                reasons.append("zápas už začal")
+            row["skip_reasons"] = reasons
+            if not reasons:
                 row["value"] = {
                     "side": i, "player": side, "p": row["p"][i], "odds": o_basis,
                     "best_odds": odds[side]["best"], "best_book": odds[side]["best_book"],
                     "edge": edges[i], "kelly_pct": kelly_pct(row["p"][i], odds[side]["best"]),
-                    "min_odds": (1 + threshold) / row["p"][i],
+                    "min_odds": (1 + threshold) / row["p"][i], "disagree": disagree,
                 }
         out.append(row)
     return out, unmatched
