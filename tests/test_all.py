@@ -167,12 +167,16 @@ class FakeSession:
         raise AssertionError(url)
 
 
-def _event(eid, a, b, oa, ob, start):
+def _event(eid, a, b, oa, ob, start, best_a=None):
+    """oa/ob = kurzy Pinnacle; best_a = kurz na hráča a v najlepšej kancelárii (line shopping)."""
     books = [("pinnacle", "Pinnacle", 1.0), ("unibet_eu", "Unibet", 0.97), ("betfair_ex_eu", "Betfair", 1.02)]
+    out = []
+    for k, t, f in books:
+        pa = best_a if (best_a and k == "betfair_ex_eu") else round(oa * f, 2)
+        out.append({"key": k, "title": t, "last_update": start, "markets": [{"key": "h2h", "outcomes": [
+            {"name": a, "price": pa}, {"name": b, "price": round(ob * f, 2)}]}]})
     return {"id": eid, "sport_key": "tennis_atp_china_open", "sport_title": "ATP China Open", "commence_time": start,
-            "home_team": a, "away_team": b,
-            "bookmakers": [{"key": k, "title": t, "last_update": start, "markets": [{"key": "h2h", "outcomes": [
-                {"name": a, "price": round(oa * f, 2)}, {"name": b, "price": round(ob * f, 2)}]}]} for k, t, f in books]}
+            "home_team": a, "away_team": b, "bookmakers": out}
 
 
 def _workdir():
@@ -226,8 +230,12 @@ def test_pipeline(workdir, monkeypatch):
     assert ids["e3"]["p"] is None and any("Neznamy" in u for u in pred["unmatched"])
     p1 = ids["e1"]["p"]
     assert abs(sum(p1) - 1) < 1e-9 and p1[0] > 0.6
-    # e1: obrovská nezhoda s trhom -> tip sa NESMIE vytvoriť (poistka proti "príliš dobrým" tipom)
-    assert ids["e1"]["value"] is None and any("nezhoda" in r or "líši" in r for r in ids["e1"]["skip_reasons"])
+    # e1: model verí favoritovi, trh nie. Stratégia v2 sa drží trhu -> výsledná p. je pri trhu
+    # a tip sa NESMIE vytvoriť (poistka proti "príliš dobrým" tipom).
+    pf, pm = ids["e1"]["p_final"][0], ids["e1"]["market_p"][0]
+    assert abs(pf - pm) < abs(pf - p1[0]) / 2   # oveľa bližšie k trhu než k modelu
+    assert pf < p1[0] - 0.2
+    assert ids["e1"]["value"] is None and ids["e1"]["skip_reasons"]
     assert ids["e4"]["value"] is None
     assert pred["quota_remaining"] == 450
     assert ids["e1"]["odds"][top[0]]["best_book"] == "Betfair"
@@ -235,11 +243,9 @@ def test_pipeline(workdir, monkeypatch):
     assert bt["chosen"]["test"]["bets"] > 0
     assert not pd.read_csv("state/bet_log.csv").empty is False  # log môže byť zatiaľ prázdny
 
-    # e6: kurz zhruba zodpovedá trhu, ale je o ~8 % lepší, než hovorí model -> legitímny tip
-    p2 = ids["e2"]["p"][0]
-    oa = round((1 + 0.085) / p2, 2)
-    ob = round(0.95 / (1 - p2), 2)
-    sess.events = [_event("e6", top[1], top[2], oa, ob, fut)]
+    # e6: jedna kancelária dáva o ~10 % lepší kurz, než je férový kurz ostrého trhu -> legitímny tip
+    fair_a = ids["e2"]["market_p"][0]
+    sess.events = [_event("e6", top[1], top[2], 1.9, 1.9, fut, best_a=round(1.10 / fair_a, 2))]
     run.main()
     pred = json.load(open("docs/data/predictions.json"))
     e6 = {m["id"]: m for m in pred["matches"]}["e6"]
@@ -254,7 +260,7 @@ def test_pipeline(workdir, monkeypatch):
     log.loc[:, "start"] = soon
     log.loc[:, "created_at"] = (pd.Timestamp.now(tz="UTC") - pd.Timedelta(hours=3)).isoformat()
     log.to_csv("state/bet_log.csv", index=False)
-    sess.events = [_event("e6", top[1], top[2], round(oa * 0.93, 2), ob, soon)]
+    sess.events = [_event("e6", top[1], top[2], 1.9, 1.9, soon, best_a=round(1.02 / fair_a, 2))]
     n_calls = len(sess.calls)
     monkeypatch.setattr(sys, "argv", ["run.py", "snapshot"])
     run.main()
