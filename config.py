@@ -3,7 +3,7 @@ import os
 
 # --- Historické dáta ---
 # Výsledky: TennisMyLife (denne aktualizované, MIT licencia). Kurzy na backtest: tennis-data.co.uk (voliteľné).
-START_YEAR = 2011            # od ktorého roku sa sťahujú výsledky
+START_YEAR = 2009            # od ktorého roku sa sťahujú výsledky
 ODDS_START_YEAR = 2013       # od ktorého roku sa sťahujú historické kurzy
 ODDS_DOWNLOAD_BUDGET_S = 120 # max. čas na sťahovanie kurzov v jednom behu (pomalý server nezdrží celý beh)
 TOURS = ["ATP", "WTA"]
@@ -22,24 +22,33 @@ MIN_SERVE_MATCHES = 8        # koľko zápasov so štatistikou podania musí ma�
 
 # --- Kalibračný model (logistická regresia nad Elo) ---
 CALIB_TRAIN_YEARS = 4        # na koľkých predchádzajúcich rokoch sa model učí
-BACKTEST_FIRST_YEAR = 2015   # prvé roky slúžia na "zahriatie" Elo ratingov
+BACKTEST_FIRST_YEAR = 2013   # prvé roky slúžia na "zahriatie" Elo ratingov
 
 # --- Value stávky ---
-# Na akom kurze sa hľadá value: "avg" = priemerný kurz stávkových kancelárií (realistické),
-# "max" = najlepší kurz na trhu (optimistické), "pinnacle" = Pinnacle.
-VALUE_ODDS_BASIS = "avg"
-MIN_ODDS = 1.30
-MAX_ODDS = 5.00
-# Minimálna výhoda (edge = p_model * kurz - 1). Ak AUTO_TUNE_EDGE=True, prah sa vyberie
+# STRATÉGIA (od v2): východiskom nie je model, ale TRH. Férová pravdepodobnosť sa vezme
+# z ostrých kurzov (Pinnacle / medián kancelárií, bez marže), model ju len jemne opraví
+# (váhy sa učia z histórie) a stávka sa robí na NAJLEPŠÍ kurz na trhu. Overené na 25 450
+# zápasoch 2015–2019: čistý model −2 % ROI, táto stratégia +3 % ROI.
+MARKET_ANCHORED = True
+BLEND_MIN_N = 2000           # menej zápasov s kurzami -> váhy sa neučia, použije sa čistý trh
+BLEND_W_MKT_RANGE = (0.70, 1.30)
+BLEND_W_RES_RANGE = (-0.50, 0.50)
+
+# Na akom kurze sa hľadá value: "max" = najlepší kurz na trhu (pri tejto stratégii nutné),
+# "avg" = priemer kancelárií, "pinnacle" = Pinnacle.
+VALUE_ODDS_BASIS = "max"
+MIN_ODDS = 1.50
+MAX_ODDS = 4.00
+# Minimálna výhoda (edge = p * kurz - 1). Ak AUTO_TUNE_EDGE=True, prah sa vyberie
 # v backteste len na "tréningových" rokoch a overí sa na neskorších rokoch (out-of-sample).
-MIN_EDGE = 0.07
+MIN_EDGE = 0.02
 AUTO_TUNE_EDGE = True
-EDGE_GRID = [0.03, 0.05, 0.07, 0.10, 0.15]
+EDGE_GRID = [0.01, 0.02, 0.03, 0.05, 0.07]
 TUNE_LAST_TRAIN_YEAR = 2020  # ladenie prahu na rokoch <= 2020 (ak sú kurzy len staršie, posunie sa automaticky)
-# Poistky proti "príliš dobrým" tipom: keď sa model s trhom rozchádza o veľa, spravidla
-# trh vie niečo, čo model nevidí (zranenie, forma). Také zápasy sa netipujú.
-MAX_EDGE = 0.25                 # edge nad týmto je podozrivý, nie výhodný
-MAX_MARKET_DISAGREEMENT = 0.08  # max. rozdiel pravdepodobnosti modelu a férovej pravdepodobnosti trhu
+# Poistky proti "príliš dobrým" tipom: keď sa kurz rozchádza s ostrým trhom o veľa,
+# spravidla trh vie niečo navyše (zranenie, forma) alebo je kurz chyba, ktorá nezostane.
+MAX_EDGE = 0.30                 # edge nad týmto je podozrivý, nie výhodný
+MAX_MARKET_DISAGREEMENT = 0.15  # max. rozdiel výslednej pravdepodobnosti a férovej pravdepodobnosti trhu
 KELLY_FRACTION = 0.25        # zlomkové Kelly pre návrh veľkosti stávky
 MAX_STAKE_PCT = 0.02         # max 2 % bankrollu na jednu stávku
 

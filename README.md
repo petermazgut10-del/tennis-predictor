@@ -3,6 +3,13 @@
 Predikcie tenisových zápasov (ATP + WTA) pred zápasom a hľadanie **value stávok** oproti kurzom stávkových kancelárií.
 Beží zadarmo na GitHube: každé ráno sa sám aktualizuje a výsledky ukáže na webovej stránke.
 
+> **Stratégia v2 (september 2026).** Backtest na 25 450 zápasoch s kurzami (2015–2019) ukázal, že samotný model
+> stávkové kancelárie neporazí: presnosť 65,9 % vs 67,8 % (Pinnacle), ROI −2 %. Preto sa od v2 nevychádza z modelu,
+> ale z **trhu**: férová pravdepodobnosť sa vezme z ostrých kurzov (Pinnacle / medián kancelárií, bez marže),
+> model ju len jemne opraví (váhy sa učia z histórie) a stávka ide na **najlepší kurz na trhu**.
+> Tá istá história: ROI **+3 %** (a +2 % má aj samotné hľadanie najlepšieho kurzu). Preto má zmysel mať účty
+> vo viacerých kanceláriách – s jedinou kanceláriou je očakávaný zisk zhruba nula.
+
 **Čo robí**
 1. Stiahne výsledky zápasov od roku 2011 (ATP, Challengery, WTA) z [TennisMyLife](https://stats.tennismylife.org) – zadarmo, MIT licencia, denne aktualizované – a historické kurzy z [tennis-data.co.uk](http://www.tennis-data.co.uk) na backtest (ak je stránka dostupná).
 2. Vypočíta **Elo ratingy** každého hráča – celkový a pre každý povrch (hard / antuka / tráva).
@@ -10,7 +17,9 @@ Beží zadarmo na GitHube: každé ráno sa sám aktualizuje a výsledky ukáže
    (bod → gem → tajbrejk → set → zápas) z nich odvodí šancu na výhru aj rozdelenie skóre a počtu gemov.
 4. **Kalibračný model** (logistická regresia) spojí Elo, podanie, rebríček a ďalšie signály do jednej pravdepodobnosti.
    Model sa vždy učí len na minulosti.
-5. **Backtest**: overí, ako by model dopadol v rokoch 2015–dnes, a porovná ho s Pinnacle (najostrejšou kanceláriou).
+4b. **Zmes s trhom**: výsledná pravdepodobnosť = férová pravdepodobnosť trhu, jemne opravená modelom
+   (`logit(p) = w_trh · logit(p_trh) + w_model · (logit(p_model) − logit(p_trh))`). Váhy sa učia na tréningových rokoch.
+5. **Backtest**: porovná tri stratégie (zmes trh + model, len najlepší kurz, čistý model) a s Pinnacle.
    Prah výhody sa ladí len na rokoch do 2020, roky 2021+ sú poctivý test.
    Historické kurzy: keď je tennis-data.co.uk nedostupné, použije sa verejné zrkadlo tých istých dát
    na GitHube (repozitár 0xsimulacra/MLT, ATP 2001–2019, WTA 2007–2019).
@@ -79,7 +88,8 @@ Aj pri zelenom verdikte platí: **najprv 2–3 mesiace papierových stávok** (a
 
 ## Úpravy
 Všetky nastavenia sú v `config.py` (dá sa editovať priamo na GitHube – ikona ceruzky):
-- `VALUE_ODDS_BASIS` – na akom kurze sa meria value: `"avg"` (priemer, realistické), `"max"` (najlepší kurz), `"pinnacle"`
+- `MARKET_ANCHORED` – `True` = stratégia v2 (základ je trh). `False` = stará stratégia (základ je model)
+- `VALUE_ODDS_BASIS` – na akom kurze sa meria value: `"max"` (najlepší kurz – pri v2 nutné), `"avg"`, `"pinnacle"`
 - `MIN_ODDS`, `MAX_ODDS` – rozsah kurzov
 - `AUTO_TUNE_EDGE` / `MIN_EDGE` – automatický alebo pevný prah výhody
 - `MAX_EDGE` – edge nad touto hranicou je podozrivý (model sa mýli častejšie než trh) a tip sa nevytvorí
@@ -109,7 +119,9 @@ python tests/test_all.py        # testy na syntetických dátach (bez internetu)
 - **GitHub vypne naplánované behy** po 60 dňoch bez aktivity v repozitári – stačí kliknúť *Enable workflow*.
 
 ## Obmedzenia (poctivo)
-- Model na úrovni bodov zatiaľ nadhodnocuje počet gemov (~o 2) a podhodnocuje zápasy bez straty setu. Pre tipy na víťaza je prínos malý, ale pozitívny; pre hendikepy a over/under treba najprv empirickú korekciu.
+- Očakávaná výhoda je rádovo +2 až +3 % z obratu a stojí na tom, že staviaš za najlepší dostupný kurz. Aby sa to prejavilo nad šumom, treba niekoľko stoviek stávok.
+- Model sám o sebe trh neporáža. V zmesi vychádza váha jeho korekcie malá a **záporná** (keď je model optimistickejší než trh, treba mierne ubrať) – stabilne vo všetkých obdobiach aj na ATP aj na WTA.
+- Model na úrovni bodov zatiaľ nadhodnocuje počet gemov (~o 2) a podhodnocuje zápasy bez straty setu. Pre tipy na víťaza je prínos malý; pre hendikepy a over/under treba najprv empirickú korekciu.
 - Model nevie o zraneniach, únave ani motivácii. Stávkové kancelárie áno.
 - Ak tennis-data.co.uk nie je dostupné, backtest proti historickým kurzom sa preskočí (stránka to ukáže). Ratingy a tipy fungujú ďalej.
 - Backtest ráta s kurzami tesne pred zápasom; reálne kurzy, za ktoré stihneš staviť, môžu byť iné. Kancelárie tiež obmedzujú úspešných hráčov.

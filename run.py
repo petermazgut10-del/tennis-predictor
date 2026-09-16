@@ -121,8 +121,12 @@ def main():
     bt["data_until"] = str(last_date.date())
     write_json("backtest.json", bt)
     ch = bt["chosen"]
-    print(f"   prah edge {bt['chosen_edge']:.3f} | tréning ROI {ch['train']['roi']} ({ch['train']['bets']} stávok)"
-          f" | test ROI {ch['test']['roi']} ({ch['test']['bets']} stávok) | verdikt: {bt['verdict']}")
+    print(f"   zmes: {bt['blend']['popis']}")
+    for st in bt["strategies"]:
+        print(f"   {'>' if st['primary'] else ' '} {st['name']:24s} prah {st['edge']:.0%}"
+              f" | tréning ROI {st['train']['roi']} ({st['train']['bets']})"
+              f" | test ROI {st['test']['roi']} ({st['test']['bets']})")
+    print(f"   verdikt: {bt['verdict']}")
 
     model = backtest.fit_latest(hist, feats)
     write_json("ratings.json", ratings_export(book, srv, model, last_date))
@@ -133,6 +137,7 @@ def main():
     api = OddsAPI()
     preds, unmatched, notes = [], [], []
     threshold = bt["chosen_edge"]
+    w_blend = (bt["blend"]["w_market"], bt["blend"]["w_model"])
     if not api.enabled:
         notes.append("Chýba ODDS_API_KEY – predikcie nadchádzajúcich zápasov sa preskočili.")
     else:
@@ -146,7 +151,8 @@ def main():
                 except QuotaLow as e:
                     notes.append(str(e))
                     break
-                p, u = predict_events(events, sp, book, srv, model, idx, threshold, now.to_pydatetime())
+                p, u = predict_events(events, sp, book, srv, model, idx, threshold,
+                                      now.to_pydatetime(), w_blend)
                 preds += p
                 unmatched += u
         except Exception as e:
@@ -174,6 +180,7 @@ def main():
     write_json("predictions.json", {
         "generated_at": now.isoformat(), "threshold": threshold, "basis": config.VALUE_ODDS_BASIS,
         "min_odds": config.MIN_ODDS, "max_odds": config.MAX_ODDS, "quota_remaining": api.remaining,
+        "blend": bt["blend"], "strategy": bt.get("strategy"),
         "matches": preds, "unmatched": sorted(set(unmatched)), "notes": notes, "verdict": bt["verdict"],
     })
     write_json("tracker.json", tracker.summary(log))
