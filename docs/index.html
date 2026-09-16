@@ -572,7 +572,7 @@ function renderBT() {
     tile("Úspešnosť", pct(c.hit_rate), `priem. kurz ${num(c.avg_odds)}`),
     tile("Zisk (1 j. / stávka)", sgn(c.profit, 1) + " j.", `max. prepad ${num(c.max_dd, 1)} j.`, c.profit > 0 ? "pos" : c.profit < 0 ? "negt" : ""),
     tile("Bankroll, ¼ Kelly", "× " + num(B.kelly_final_bankroll, 2), "štart = 1,00"),
-    tile("Prah edge", pct(B.chosen_edge, 1), B.basis === "avg" ? "na priemerných kurzoch" : B.basis));
+    tile("Prah edge", pct(B.chosen_edge, 1), B.basis === "max" ? "na najlepšom kurze trhu" : B.basis === "avg" ? "na priemerných kurzoch" : "na kurzoch Pinnacle"));
   $("#bt-curve-sub").textContent = `Jednotky zisku pri vklade 1 j. na každý tip, od roku ${B.tune_last_train_year + 1}.`;
   lineChart($("#ch-curve"), (B.curve || []).map((p) => ({ x: new Date(p.date), y: p.cum })), { yFmt: (v) => sgn(v, 0) + " j.", tipFmt: (p) => [sgn(p.y, 1) + " j.", "týždeň od " + p.x.toLocaleDateString("sk-SK")] });
   yearBars($("#ch-years"), B.per_year, B.tune_last_train_year);
@@ -580,7 +580,7 @@ function renderBT() {
   renderScores();
   table($("#t-acc"), ["Metóda", "Presnosť", "Log loss", "Brier"], (B.accuracy_test || []).map((r) => [r.name, pct(r.accuracy), r.log_loss == null ? "–" : num(r.log_loss, 3), r.brier == null ? "–" : num(r.brier, 3)]), [1, 2, 3]);
   const ST = B.strategies || [];
-  $("#strat-sub").textContent = B.blend ? `Výsledná pravdepodobnosť = ${B.blend.popis}. Každá stratégia má vlastný prah naladený len na tréningových rokoch.` : "";
+  $("#strat-sub").textContent = B.blend ? `Výsledná pravdepodobnosť = ${B.blend.popis}. Prah ${pct(B.chosen_edge, 1)} je rovnaký pre všetky tri – rozdiel je len v tom, odkiaľ berú pravdepodobnosť.` : "";
   table($("#t-strat"), ["Stratégia", "Prah", "Tréning: stávky", "Tréning: ROI", "Test: stávky", "Test: ROI"],
     ST.map((x) => { const r = [h("div", {}, x.name, h("div", { class: "muted" }, x.popis || "")), pct(x.edge, 1),
       num(x.train.bets, 0), spct(x.train.roi), num(x.test.bets, 0), spct(x.test.roi)];
