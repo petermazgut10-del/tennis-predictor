@@ -170,6 +170,8 @@ details summary { cursor: pointer; color: var(--ink-2); }
       <div class="sub">Z podania a returnu sa dá odhadnúť aj priebeh zápasu. Tu sa porovnáva, či sedí počet gemov a pomer 2:0 / 2:1 (základ pre budúce hendikepy a over/under).</div>
       <div id="scores" style="margin-top:10px"></div>
     </div>
+    <div class="card"><h2>Porovnanie stratégií (test mimo tréningu)</h2>
+      <div class="sub" id="strat-sub"></div><div class="tbl"><table id="t-strat"></table></div></div>
     <div class="card"><h2>Citlivosť na prah výhody (edge)</h2><div class="sub" id="grid-sub"></div><div class="tbl"><table id="t-grid"></table></div></div>
     <div class="grid2">
       <div class="card"><h3>Podľa okruhu (test)</h3><div class="tbl"><table id="t-tour"></table></div></div>
@@ -205,8 +207,9 @@ details summary { cursor: pointer; color: var(--ink-2); }
       <ol>
         <li><b>Elo ratingy</b> – každý hráč má celkový rating a rating pre každý povrch. Po každom zápase sa upravia podľa toho, či výsledok bol prekvapenie.</li>
         <li><b>Kalibrácia</b> – logistická regresia spojí celkové a povrchové Elo, rebríček, skúsenosti a pauzu od posledného zápasu do jednej pravdepodobnosti. Učí sa len na minulých rokoch.</li>
-        <li><b>Value</b> – ak model dáva hráčovi pravdepodobnosť <i>p</i> a kurz je <i>k</i>, výhoda je <i>edge = p × k − 1</i>. Tip sa ukáže, keď je edge nad prahom z backtestu.</li>
-        <li><b>Prečo nie je tip</b> – keď sa model od trhu líši o viac ako 8 percentuálnych bodov, tip sa nevytvorí. Veľká nezhoda s Pinnacle spravidla znamená, že trh vie niečo, čo model nevidí (zranenie, forma, odhlásenie), nie že sme našli výhodu.</li>
+        <li><b>Trh ako základ</b> – overili sme na 25 450 zápasoch (2015–2019), že samotný model kurzy neporazí (presnosť 65,9 % vs 67,8 % Pinnacle, ROI −2 %). Preto sa berie férová pravdepodobnosť ostrého trhu (Pinnacle alebo medián kancelárií, bez marže) a model ju len jemne opraví. Táto zmes mala v teste ROI +3 %.</li>
+        <li><b>Value = najlepší kurz</b> – výhoda nevzniká z toho, že „vieme viac než Pinnacle“, ale z toho, že jedna kancelária dáva vyšší kurz než zvyšok trhu. <i>edge = p × najlepší kurz − 1</i>. Preto má zmysel mať účty vo viacerých kanceláriách; s jednou to na nulu nevyjde.</li>
+        <li><b>Prečo nie je tip</b> – najčastejšie preto, že najlepší kurz nie je dosť vysoko nad férovým kurzom trhu. Tip sa nevytvorí ani pri príliš veľkom rozdiele (kurz je zrejme chyba alebo trh vie o zranení) a pri kurze mimo rozsahu.</li>
         <li><b>Podanie / Return</b> v Elo rebríčku – o koľko percentuálnych bodov vyhráva hráč viac bodov na svojom podaní (resp. na returne súpera) ako priemerný hráč. Z týchto dvoch čísel model počíta priebeh zápasu bod po bode.</li>
         <li><b>CLV (closing line value)</b> – porovnanie kurzu v čase tipu s kurzom tesne pred zápasom. Ak si tipoval kurz 2,20 a pred zápasom je 2,00, trh sa posunul k tvojmu názoru (+10 % CLV). Dlhodobo kladné CLV je najspoľahlivejší znak skutočnej výhody.</li>
         <li><b>Férový kurz</b> = 1 / p. <b>Min. kurz</b> = najnižší kurz, pri ktorom je tip ešte value – porovnaj ho s kurzom vo svojej stávkovej kancelárii.</li>
@@ -215,7 +218,8 @@ details summary { cursor: pointer; color: var(--ink-2); }
       <ul>
         <li>Model nevie o zraneniach, chorobe, motivácii ani o tom, že hráč včera odohral 3-hodinový zápas, ak ešte nie je v dátach. Pinnacle to vie. Keď sa model s trhom veľmi nezhoduje, častejšie má pravdu trh.</li>
         <li>Výsledky (ATP, Challengery, WTA) sú z TennisMyLife a aktualizujú sa denne. Historické kurzy na backtest sú z tennis-data.co.uk – ak stránka nie je dostupná, backtest proti kurzom sa preskočí.</li>
-        <li>Backtest na „priemerných kurzoch“ je realistickejší než na „najlepších kurzoch“. Stávkové kancelárie navyše často obmedzia hráčov, ktorí dlhodobo vyhrávajú.</li>
+        <li>Stratégia stojí na tom, že staviaš za <b>najlepší dostupný kurz</b>. Ak staviaš len v jednej kancelárii, očakávaný zisk je zhruba nula. Kancelárie navyše často obmedzia hráčov, ktorí dlhodobo vyhrávajú.</li>
+        <li>Očakávaný zisk je rádovo +2 až +3 % z obratu. Aby sa to prejavilo nad šumom, treba niekoľko stoviek stávok – preto papierové stávky a CLV, nie prvých 10 tipov.</li>
         <li>Veľkosť stávky: navrhované % bankrollu je štvrtinové Kelly s limitom 2 %. Hraj len s peniazmi, ktoré si môžeš dovoliť stratiť.</li>
       </ul>
     </div>
@@ -512,7 +516,8 @@ function renderTips() {
       h("div", { class: "who", style: "margin-top:6px" }, v.player), h("div", { class: "vs" }, "proti " + opp),
       h("div", { class: "meta" }, when(m.start)),
       h("div", { class: "kv" },
-        h("span", {}, "Pravdepodobnosť (model)"), h("span", {}, pct(v.p)),
+        h("span", {}, "Výsledná pravdepodobnosť"), h("span", {}, pct(v.p)),
+        h("span", {}, "z toho trh / model"), h("span", {}, v.p_market == null ? "–" : `${pct(v.p_market)} / ${pct(v.p_model)}`),
         h("span", {}, "Férový kurz"), h("span", {}, num(1 / v.p)),
         h("span", {}, "Min. kurz na value"), h("span", {}, num(v.min_odds)),
         h("span", {}, `Najlepší kurz (${v.best_book})`), h("span", {}, num(v.best_odds)),
@@ -522,10 +527,12 @@ function renderTips() {
   const rows = ms.map((m) => {
     const [a, b] = m.players;
     const oa = m.odds?.[a], ob = m.odds?.[b];
-    const pin = m.odds?.pin_fair_home;
+    const pin = m.market_p ? m.market_p[0] : m.odds?.fair_home;
+    const pf = m.p_final || m.p;
     const cell = (i) => {
-      if (!m.p) return "–";
-      return h("div", {}, pct(m.p[i], 0), h("div", { class: "bar2" }, h("i", { style: `width:${(m.p[i] * 100).toFixed(1)}%` })));
+      if (!pf) return "–";
+      return h("div", {}, pct(pf[i], 0), h("div", { class: "bar2" }, h("i", { style: `width:${(pf[i] * 100).toFixed(1)}%` })),
+        m.p && m.p_final ? h("div", { class: "muted" }, "model " + pct(m.p[i], 0)) : null);
     };
     const edgeCell = (o) => o?.edge == null ? "–" : h("span", { class: o.edge > 0 ? "pos" : "muted" }, spct(o.edge));
     const r = [
@@ -545,12 +552,12 @@ function renderTips() {
     return r;
   });
   if (!rows.length) { $("#t-matches").replaceChildren(h("tbody", {}, h("tr", {}, h("td", { class: "empty" }, "Žiadne zápasy.")))); }
-  else table($("#t-matches"), ["Začiatok", "Zápas", "Model", "Pinnacle (trh)", "Priem. kurz", "Najlepší kurz", "Edge", "Prečo nie je tip"], rows, [3, 4, 5, 6]);
+  else table($("#t-matches"), ["Začiatok", "Zápas", "Výsledná p.", "Trh (bez marže)", "Priem. kurz", "Najlepší kurz", "Edge", "Prečo nie je tip"], rows, [3, 4, 5, 6]);
   const notes = $("#notes"); notes.replaceChildren();
   if (P?.unmatched?.length) notes.append(h("details", {}, h("summary", {}, `Nenapárovaní hráči (${P.unmatched.length}) – dá sa doplniť v state/aliases.csv`), h("div", { class: "muted" }, P.unmatched.join(", "))));
   for (const n of P?.notes || []) notes.append(h("div", { class: "muted" }, n));
   const rn = $("#rules-note");
-  if (rn && B?.rules) rn.textContent = `Tip vznikne len ak: výhoda ${pct(P?.threshold ?? 0.07, 0)}–${pct(B.rules.max_edge, 0)}, model sa od trhu líši najviac o ${pct(B.rules.max_disagreement, 0)} a kurz je v rozsahu ${num(B.rules.min_odds)}–${num(B.rules.max_odds)}.`;
+  if (rn && B?.rules) rn.textContent = `Základ je férová pravdepodobnosť ostrého trhu (Pinnacle / medián kancelárií), model ju len jemne opraví. Tip vznikne, keď NAJLEPŠÍ kurz na trhu dáva výhodu ${pct(P?.threshold ?? 0.02, 0)}–${pct(B.rules.max_edge, 0)}, kurz je v rozsahu ${num(B.rules.min_odds)}–${num(B.rules.max_odds)} a k dispozícii sú aspoň 3 kancelárie.`;
   $("#tips-meta").textContent = P ? `Prah edge ${pct(P.threshold, 1)} · kurzy ${num(P.min_odds)}–${num(P.max_odds)} · zostáva ${P.quota_remaining ?? "?"} kreditov API` : "";
 }
 
@@ -572,6 +579,12 @@ function renderBT() {
   calibChart($("#ch-calib"), B.calibration);
   renderScores();
   table($("#t-acc"), ["Metóda", "Presnosť", "Log loss", "Brier"], (B.accuracy_test || []).map((r) => [r.name, pct(r.accuracy), r.log_loss == null ? "–" : num(r.log_loss, 3), r.brier == null ? "–" : num(r.brier, 3)]), [1, 2, 3]);
+  const ST = B.strategies || [];
+  $("#strat-sub").textContent = B.blend ? `Výsledná pravdepodobnosť = ${B.blend.popis}. Každá stratégia má vlastný prah naladený len na tréningových rokoch.` : "";
+  table($("#t-strat"), ["Stratégia", "Prah", "Tréning: stávky", "Tréning: ROI", "Test: stávky", "Test: ROI"],
+    ST.map((x) => { const r = [h("div", {}, x.name, h("div", { class: "muted" }, x.popis || "")), pct(x.edge, 1),
+      num(x.train.bets, 0), spct(x.train.roi), num(x.test.bets, 0), spct(x.test.roi)];
+      if (x.primary) r._class = "value"; return r; }), [1, 2, 3, 4, 5]);
   $("#grid-sub").textContent = `Prah sa vyberá len podľa tréningových rokov (do ${B.tune_last_train_year}) – test ukazuje, ako by to dopadlo naozaj. Vybraný prah: ${pct(B.chosen_edge, 1)}.`;
   table($("#t-grid"), ["Edge ≥", "Tréning: stávky", "Tréning: ROI", "Test: stávky", "Test: ROI", "Test: zisk"],
     B.grid.map((g) => { const r = [pct(g.edge, 1), num(g.train.bets, 0), spct(g.train.roi), num(g.test.bets, 0), spct(g.test.roi), sgn(g.test.profit, 1)]; if (g.edge === B.chosen_edge) r._class = "value"; return r; }), [1, 2, 3, 4, 5]);
