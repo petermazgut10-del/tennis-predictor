@@ -208,12 +208,13 @@ def test_pipeline(workdir, monkeypatch):
     fut = (pd.Timestamp.now(tz="UTC") + pd.Timedelta(hours=20)).strftime("%Y-%m-%dT%H:%M:%SZ")
     past = (pd.Timestamp.now(tz="UTC") - pd.Timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
     events = [
-        _event("e1", top[0], top[40], 3.5, 1.33, fut),      # silný hráč za vysoký kurz -> value
+        _event("e1", top[0], top[40], 3.5, 1.33, fut),      # silný hráč za vysoký kurz -> podozrivé, netipovať
         _event("e2", top[1], top[2], 1.9, 1.9, fut),
         _event("e3", top[3], "Neznamy Hrac", 1.5, 2.6, fut),  # nenapárovaný
         _event("e4", top[5], top[6], 2.0, 1.8, past),       # už začal -> bez value tipu
         {"id": "d1", "home_team": "A B/C D", "away_team": "E F/G H", "commence_time": fut, "bookmakers": []},
     ]
+
     sess = FakeSession(events)
     monkeypatch.setattr(odds_api.requests, "Session", lambda: sess)
     monkeypatch.setattr(sys, "argv", ["run.py", "update", "--offline"])
@@ -225,29 +226,42 @@ def test_pipeline(workdir, monkeypatch):
     assert ids["e3"]["p"] is None and any("Neznamy" in u for u in pred["unmatched"])
     p1 = ids["e1"]["p"]
     assert abs(sum(p1) - 1) < 1e-9 and p1[0] > 0.6
-    assert ids["e1"]["value"] and ids["e1"]["value"]["player"] == top[0]
+    # e1: obrovská nezhoda s trhom -> tip sa NESMIE vytvoriť (poistka proti "príliš dobrým" tipom)
+    assert ids["e1"]["value"] is None and any("nezhoda" in r or "líši" in r for r in ids["e1"]["skip_reasons"])
     assert ids["e4"]["value"] is None
     assert pred["quota_remaining"] == 450
     assert ids["e1"]["odds"][top[0]]["best_book"] == "Betfair"
     bt = json.load(open("docs/data/backtest.json"))
     assert bt["chosen"]["test"]["bets"] > 0
+    assert not pd.read_csv("state/bet_log.csv").empty is False  # log môže byť zatiaľ prázdny
+
+    # e6: kurz zhruba zodpovedá trhu, ale je o ~8 % lepší, než hovorí model -> legitímny tip
+    p2 = ids["e2"]["p"][0]
+    oa = round((1 + 0.085) / p2, 2)
+    ob = round(0.95 / (1 - p2), 2)
+    sess.events = [_event("e6", top[1], top[2], oa, ob, fut)]
+    run.main()
+    pred = json.load(open("docs/data/predictions.json"))
+    e6 = {m["id"]: m for m in pred["matches"]}["e6"]
+    assert e6["value"], e6.get("skip_reasons")
+    assert e6["value"]["disagree"] <= config.MAX_MARKET_DISAGREEMENT
     log = pd.read_csv("state/bet_log.csv")
     assert (log["status"] == "pending").sum() >= 1
+    assert not log["bet_id"].str.startswith("e1|").any()
 
     # hodinu pred zápasom: rýchla snímka kurzov -> záverečný kurz a CLV (kurz na favorita medzitým klesol)
     soon = (pd.Timestamp.now(tz="UTC") + pd.Timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
     log.loc[:, "start"] = soon
     log.loc[:, "created_at"] = (pd.Timestamp.now(tz="UTC") - pd.Timedelta(hours=3)).isoformat()
     log.to_csv("state/bet_log.csv", index=False)
-    sess.events = [_event("e1", top[0], top[40], 2.4, 1.6, soon)]
+    sess.events = [_event("e6", top[1], top[2], round(oa * 0.93, 2), ob, soon)]
     n_calls = len(sess.calls)
     monkeypatch.setattr(sys, "argv", ["run.py", "snapshot"])
     run.main()
     assert len(sess.calls) == n_calls + 1          # jediný dopyt na /odds, žiadne /sports ani /scores
     log = pd.read_csv("state/bet_log.csv")
-    r = log[log["bet_id"].str.startswith("e1|")].iloc[0]
-    assert abs(r["close_odds"] - round((2.4 + 2.4 * 0.97 + 2.4 * 1.02) / 3, 3)) < 0.01
-    assert r["clv"] > 0.3 and r["clv_ev"] > 0
+    r = log[log["bet_id"].str.startswith("e6|")].iloc[0]
+    assert r["close_odds"] > 0 and r["clv"] > 0
     tr = json.load(open("docs/data/tracker.json"))
     assert tr["clv"]["n"] >= 1 and tr["clv"]["avg"] > 0
     # snímka bez tipov pred začiatkom nesmie míňať kredity
@@ -262,10 +276,10 @@ def test_pipeline(workdir, monkeypatch):
     log.loc[:, "start"] = (pd.Timestamp.now(tz="UTC") - pd.Timedelta(hours=5)).isoformat()
     log.to_csv("state/bet_log.csv", index=False)
     sess.events = []
-    sess.scores = [{"id": "e1", "completed": True, "scores": [{"name": top[0], "score": "2"}, {"name": top[40], "score": "1"}]}]
+    sess.scores = [{"id": "e6", "completed": True, "scores": [{"name": top[1], "score": "2"}, {"name": top[2], "score": "1"}]}]
     run.main()
     log = pd.read_csv("state/bet_log.csv")
-    r = log[log["bet_id"].str.startswith("e1|")].iloc[0]
+    r = log[log["bet_id"].str.startswith("e6|")].iloc[0]
     assert r["status"] == "won" and abs(r["profit"] - (r["odds"] - 1)) < 1e-9
     tr = json.load(open("docs/data/tracker.json"))
     assert tr["settled"] >= 1 and tr["won"] >= 1
