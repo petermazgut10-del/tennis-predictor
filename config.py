@@ -41,8 +41,12 @@ MIN_ODDS = 1.50
 MAX_ODDS = 4.00
 # Minimálna výhoda (edge = p * kurz - 1). Ak AUTO_TUNE_EDGE=True, prah sa vyberie
 # v backteste len na "tréningových" rokoch a overí sa na neskorších rokoch (out-of-sample).
+# Prah je PEVNÝ na 2 %: automatické ladenie na krátkych tréningových rokoch vyberalo vysoké prahy
+# (7 %) s malým počtom stávok. Dve nezávislé štúdie (2010–14 vs 2015–19 na 25 450 zápasoch
+# a produkčný backtest 2013–17 vs 2018–19) dali pri 2 % rovnaký alebo lepší výsledok
+# pri niekoľkonásobne väčšom počte stávok – a ROI je kladné pri každom prahu v mriežke.
 MIN_EDGE = 0.02
-AUTO_TUNE_EDGE = True
+AUTO_TUNE_EDGE = False
 EDGE_GRID = [0.01, 0.02, 0.03, 0.05, 0.07]
 TUNE_LAST_TRAIN_YEAR = 2020  # ladenie prahu na rokoch <= 2020 (ak sú kurzy len staršie, posunie sa automaticky)
 # Poistky proti "príliš dobrým" tipom: keď sa kurz rozchádza s ostrým trhom o veľa,
